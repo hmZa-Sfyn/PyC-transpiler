@@ -216,10 +216,6 @@ int is_even(long long n);
 char* fizzbuzz(long long n);
 int main(int argc, char** argv);
 
-long long add(long long a, long long b) {
-    return (a + b);
-}
-
 double hypotenuse(double a, double b) {
     return sqrt((double)((a * a) + (b * b)));
 }
@@ -251,6 +247,10 @@ char* greet(char* name) {
     return ({ char _fs[4096]; snprintf(_fs,sizeof(_fs),"Hello, %s!", name); strdup(_fs); });
 }
 
+long long add(long long a, long long b) {
+    return (a + b);
+}
+
 int main(int argc, char** argv) {
     pyc_init();
     printf("%s", "═══════════════════════════════");
@@ -261,7 +261,6 @@ int main(int argc, char** argv) {
     char* name = "PyC";
     int flag = PYC_TRUE;
     printf("%s", ({ char _fs[4096]; snprintf(_fs,sizeof(_fs),"x=%lld  pi=%g  name=%s  flag=%s", x, pi, name, (flag ? "True" : "False")); strdup(_fs); }));
-    long long count = 0LL;
     char* msg = "started";
     printf("%s", ({ char _fs[4096]; snprintf(_fs,sizeof(_fs),"count=%lld  msg=%s", count, msg); strdup(_fs); }));
     long long result = add(10LL, 32LL);

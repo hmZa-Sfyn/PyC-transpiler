@@ -54,7 +54,7 @@ def main():
     print(f"x={x}  pi={pi}  name={name}  flag={flag}")
 
     # Explicit typed declarations
-    count: int = 0
+    #count: int = 0
     msg: str = "started"
     print(f"count={count}  msg={msg}")
 
