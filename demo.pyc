@@ -1,0 +1,172 @@
+# ─── demo.pyc — PyC Language Feature Demo ───────────────────────────────────
+# Run with:  pyc run demo.pyc
+
+# ── Structs ──────────────────────────────────────────────────────────────────
+struct Point:
+    x: float
+    y: float
+
+struct Person:
+    name: str
+    age:  int
+
+# ── Functions with typed params & return types ────────────────────────────────
+def greet(name: str) -> str:
+    return f"Hello, {name}!"
+
+def add(a: int, b: int) -> int:
+    return a + b
+
+def hypotenuse(a: float, b: float) -> float:
+    return sqrt(a * a + b * b)
+
+def factorial(n: int) -> int:
+    if n <= 1:
+        return 1
+    return n * factorial(n - 1)
+
+def is_even(n: int) -> bool:
+    return n % 2 == 0
+
+def fizzbuzz(n: int) -> str:
+    if n % 15 == 0:
+        return "FizzBuzz"
+    elif n % 3 == 0:
+        return "Fizz"
+    elif n % 5 == 0:
+        return "Buzz"
+    else:
+        return str(n)
+
+# ── Main program ──────────────────────────────────────────────────────────────
+def main():
+    # Basic output
+    print("═══════════════════════════════")
+    print("     PyC Language Demo")
+    print("═══════════════════════════════")
+
+    # Variables — auto-inferred types
+    x = 42
+    pi = 3.14159
+    name = "PyC"
+    flag = True
+
+    print(f"x={x}  pi={pi}  name={name}  flag={flag}")
+
+    # Explicit typed declarations
+    count: int = 0
+    msg: str = "started"
+    print(f"count={count}  msg={msg}")
+
+    # Arithmetic
+    result = add(10, 32)
+    print(f"add(10, 32) = {result}")
+    print(f"5 ** 3 = {5 ** 3}")
+    print(f"17 // 5 = {17 // 5}")
+    print(f"hypotenuse(3, 4) = {hypotenuse(3.0, 4.0)}")
+
+    # String operations
+    s = "  Hello, World!  "
+    print(s.strip())
+    print(s.strip().upper())
+    print(s.strip().lower())
+    print(s.strip().replace("World", "PyC"))
+    print(s.startswith("  "))
+    print(s.contains("World"))
+    print(s.endswith("  "))
+
+    # F-strings
+    city = "Karachi"
+    temp = 38
+    print(f"Weather in {city}: {temp} degrees")
+
+    # Lists
+    nums: list[int] = [10, 20, 30, 40, 50]
+    print(f"List: len={len(nums)}")
+    nums.append(60)
+    print(f"After append: len={len(nums)}")
+    print(f"nums[0]={nums[0]}  nums[-1 + len(nums)]=?")
+
+    # For loop with range
+    print("Squares 1-5:")
+    for i in range(1, 6):
+        sq = i * i
+        print(f"  {i}^2 = {sq}")
+
+    # For loop over list
+    total: int = 0
+    for n in nums:
+        total += n
+    print(f"Sum of list = {total}")
+
+    # While loop
+    n = 1
+    print("Powers of 2:")
+    while n <= 32:
+        print(f"  {n}")
+        n = n * 2
+
+    # If / elif / else
+    score = 75
+    if score >= 90:
+        grade = "A"
+    elif score >= 80:
+        grade = "B"
+    elif score >= 70:
+        grade = "C"
+    else:
+        grade = "F"
+    print(f"Score {score} => grade {grade}")
+
+    # Ternary expression
+    parity = "even" if is_even(42) else "odd"
+    print(f"42 is {parity}")
+
+    # Struct usage
+    p = new Point(3.0, 4.0)
+    dist = hypotenuse(p.x, p.y)
+    print(f"Point({p.x}, {p.y}) distance = {dist}")
+
+    person = new Person("Alice", 30)
+    print(f"Person: {person.name}, age {person.age}")
+
+    # Built-in conversions
+    num_str = "42"
+    num_int = int(num_str)
+    num_float = float("3.14")
+    back_to_str = str(num_int)
+    print(f"int('42')={num_int}  float('3.14')={num_float}  str(42)={back_to_str}")
+
+    # Math builtins
+    print(f"abs(-7) = {abs(-7)}")
+    print(f"max(3,9) = {max(3, 9)}")
+    print(f"min(3,9) = {min(3, 9)}")
+    print(f"sqrt(144.0) = {sqrt(144.0)}")
+    print(f"floor(3.7) = {floor(3.7)}")
+    print(f"ceil(3.2) = {ceil(3.2)}")
+
+    # Factorial
+    print(f"factorial(10) = {factorial(10)}")
+
+    # FizzBuzz
+    print("FizzBuzz 1-20:")
+    for i in range(1, 21):
+        print(f"  {fizzbuzz(i)}")
+
+    # Greeting function
+    msg2 = greet("World")
+    print(msg2)
+
+    # String split / join
+    sentence = "the quick brown fox"
+    words = sentence.split(" ")
+    joined = " | ".join(words)
+    print(f"joined: {joined}")
+
+    # ord / chr
+    print(f"ord('A') = {ord('A')}")
+    print(f"chr(65) = {chr(65)}")
+
+    print("═══════════════════════════════")
+    print("         All done!")
+    print("═══════════════════════════════")
