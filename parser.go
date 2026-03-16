@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -9,22 +8,26 @@ import (
 // ─── Parser ───────────────────────────────────────────────────────────────────
 
 type Parser struct {
-	tokens  []Token
-	pos     int
-	errors  []PycError
-	source  string
-	file    string
+	tokens []Token
+	pos    int
+	errors []PycError
+	file   string
 }
 
 func NewParser(tokens []Token, file string) *Parser {
 	return &Parser{tokens: tokens, file: file}
 }
 
+// ── Token navigation ──────────────────────────────────────────────────────────
+
+// peek returns the next meaningful token WITHOUT advancing pos.
+// Uses a local index so p.pos is never mutated.
 func (p *Parser) peek() Token {
-	for p.pos < len(p.tokens) {
-		t := p.tokens[p.pos]
+	i := p.pos
+	for i < len(p.tokens) {
+		t := p.tokens[i]
 		if t.Type == TOK_NEWLINE || t.Type == TOK_SEMICOL {
-			p.pos++
+			i++
 			continue
 		}
 		return t
@@ -32,19 +35,22 @@ func (p *Parser) peek() Token {
 	return Token{Type: TOK_EOF}
 }
 
-func (p *Parser) peekRaw() Token {
-	if p.pos < len(p.tokens) {
-		return p.tokens[p.pos]
+// advance skips leading newlines/semicolons, then consumes and returns the
+// next real token, advancing p.pos past it.
+func (p *Parser) advance() Token {
+	for p.pos < len(p.tokens) {
+		t := p.tokens[p.pos]
+		if t.Type == TOK_NEWLINE || t.Type == TOK_SEMICOL {
+			p.pos++
+			continue
+		}
+		p.pos++
+		return t
 	}
 	return Token{Type: TOK_EOF}
 }
 
-func (p *Parser) advance() Token {
-	t := p.tokens[p.pos]
-	p.pos++
-	return t
-}
-
+// skipNewlines advances p.pos past any NEWLINE/SEMICOLON tokens.
 func (p *Parser) skipNewlines() {
 	for p.pos < len(p.tokens) {
 		t := p.tokens[p.pos]
@@ -56,6 +62,33 @@ func (p *Parser) skipNewlines() {
 	}
 }
 
+// matchRaw skips newlines then checks if the raw token at p.pos matches tt.
+// If it does, consumes it and returns true.
+// Used specifically for INDENT/DEDENT which live directly in the raw token stream.
+func (p *Parser) matchRaw(tt TokenType) bool {
+	p.skipNewlines()
+	if p.pos < len(p.tokens) && p.tokens[p.pos].Type == tt {
+		p.pos++
+		return true
+	}
+	return false
+}
+
+// check returns true if the next meaningful token has type tt.
+func (p *Parser) check(tt TokenType) bool {
+	return p.peek().Type == tt
+}
+
+// match consumes the next meaningful token if it matches tt.
+func (p *Parser) match(tt TokenType) bool {
+	if p.check(tt) {
+		p.advance()
+		return true
+	}
+	return false
+}
+
+// expect consumes the next token; emits an error if it doesn't match.
 func (p *Parser) expect(tt TokenType) Token {
 	t := p.peek()
 	if t.Type != tt {
@@ -65,24 +98,8 @@ func (p *Parser) expect(tt TokenType) Token {
 	return p.advance()
 }
 
-func (p *Parser) check(tt TokenType) bool {
-	return p.peek().Type == tt
-}
-
-func (p *Parser) match(tt TokenType) bool {
-	if p.check(tt) {
-		p.advance()
-		return true
-	}
-	return false
-}
-
 func (p *Parser) addError(code ErrorCode, line, col int, lineStr string, args ...interface{}) {
 	p.errors = append(p.errors, newError(code, line, col, lineStr, args...))
-}
-
-func (p *Parser) addErrorLen(code ErrorCode, line, col, length int, lineStr string, args ...interface{}) {
-	p.errors = append(p.errors, newErrorLen(code, line, col, length, lineStr, args...))
 }
 
 // ─── Program ──────────────────────────────────────────────────────────────────
@@ -91,11 +108,16 @@ func (p *Parser) ParseProgram() *Program {
 	prog := &Program{}
 	p.skipNewlines()
 	for !p.check(TOK_EOF) {
+		prevPos := p.pos
 		stmt := p.parseTopLevelStmt()
 		if stmt != nil {
 			prog.Stmts = append(prog.Stmts, stmt)
 		}
 		p.skipNewlines()
+		// Safety: if nothing was consumed, skip one raw token to avoid infinite loop
+		if p.pos == prevPos {
+			p.pos++
+		}
 	}
 	return prog
 }
@@ -114,10 +136,50 @@ func (p *Parser) parseTopLevelStmt() Node {
 	}
 }
 
-// ─── Function Def ─────────────────────────────────────────────────────────────
+// ─── Block ────────────────────────────────────────────────────────────────────
+// Blocks are delimited by INDENT/DEDENT tokens in the raw stream.
+
+func (p *Parser) parseBlock(context string) []Node {
+	// matchRaw skips newlines then looks for INDENT in raw stream
+	if !p.matchRaw(TOK_INDENT) {
+		t := p.peek()
+		p.addError(ErrExpectedIndent, t.Line, t.Col, t.LineStr, context)
+		return nil
+	}
+
+	var stmts []Node
+	for {
+		p.skipNewlines()
+		// Check raw stream for DEDENT (end of block)
+		if p.pos < len(p.tokens) && p.tokens[p.pos].Type == TOK_DEDENT {
+			p.pos++ // consume DEDENT
+			break
+		}
+		if p.pos >= len(p.tokens) || p.tokens[p.pos].Type == TOK_EOF {
+			break
+		}
+		prevPos := p.pos
+		stmt := p.parseStmt()
+		if stmt != nil {
+			stmts = append(stmts, stmt)
+		}
+		// Safety guard: if parseStmt consumed nothing, skip one raw token
+		if p.pos == prevPos {
+			p.pos++
+		}
+	}
+
+	if len(stmts) == 0 {
+		t := p.peek()
+		p.addError(ErrEmptyBody, t.Line, t.Col, t.LineStr)
+	}
+	return stmts
+}
+
+// ─── Function Definition ──────────────────────────────────────────────────────
 
 func (p *Parser) parseFuncDef() *FuncDef {
-	tok := p.advance() // 'def'
+	tok := p.advance() // consume 'def'
 	nameTok := p.peek()
 	if nameTok.Type != TOK_IDENT {
 		p.addError(ErrExpectedIdent, nameTok.Line, nameTok.Col, nameTok.LineStr, nameTok.Value)
@@ -131,7 +193,7 @@ func (p *Parser) parseFuncDef() *FuncDef {
 	fd.Params = p.parseParams()
 	p.expect(TOK_RPAREN)
 
-	// optional return type
+	// optional return type: -> type
 	if p.check(TOK_ARROW) {
 		p.advance()
 		fd.ReturnType = p.parseTypeExpr()
@@ -187,10 +249,10 @@ func (p *Parser) parseOneParam() Param {
 	return param
 }
 
-// ─── Struct Def ───────────────────────────────────────────────────────────────
+// ─── Struct Definition ────────────────────────────────────────────────────────
 
 func (p *Parser) parseStructDef() *StructDef {
-	tok := p.advance() // 'struct'
+	tok := p.advance() // consume 'struct'
 	nameTok := p.peek()
 	name := nameTok.Value
 	if nameTok.Type != TOK_IDENT {
@@ -205,15 +267,19 @@ func (p *Parser) parseStructDef() *StructDef {
 		p.addError(ErrExpectedColon, colonTok.Line, colonTok.Col, colonTok.LineStr, "struct definition")
 	}
 
-	// parse indented fields
-	p.skipNewlines()
-	if !p.match(TOK_INDENT) {
+	if !p.matchRaw(TOK_INDENT) {
 		p.addError(ErrExpectedIndent, p.peek().Line, p.peek().Col, p.peek().LineStr, "struct definition")
 		return sd
 	}
-	for !p.check(TOK_DEDENT) && !p.check(TOK_EOF) {
+	for {
 		p.skipNewlines()
-		if p.check(TOK_DEDENT) || p.check(TOK_EOF) { break }
+		if p.pos < len(p.tokens) && p.tokens[p.pos].Type == TOK_DEDENT {
+			p.pos++
+			break
+		}
+		if p.pos >= len(p.tokens) || p.tokens[p.pos].Type == TOK_EOF {
+			break
+		}
 		ft := p.peek()
 		if ft.Type != TOK_IDENT {
 			p.addError(ErrExpectedIdent, ft.Line, ft.Col, ft.LineStr, ft.Value)
@@ -225,9 +291,7 @@ func (p *Parser) parseStructDef() *StructDef {
 		p.expect(TOK_COLON)
 		fieldType := p.parseTypeExpr()
 		sd.Fields = append(sd.Fields, StructField{Name: fieldName, Type: fieldType, Line: ft.Line, Col: ft.Col})
-		p.skipNewlines()
 	}
-	p.match(TOK_DEDENT)
 	return sd
 }
 
@@ -241,9 +305,13 @@ func (p *Parser) parseImport() Node {
 		imp.Module = modTok.Value
 		p.advance()
 		p.expect(TOK_IMPORT)
-		// ignore what's imported — we handle it at a module level
-		for !p.check(TOK_NEWLINE) && !p.check(TOK_EOF) {
-			p.advance()
+		// Consume rest of line using raw scan
+		for p.pos < len(p.tokens) {
+			tt := p.tokens[p.pos].Type
+			if tt == TOK_NEWLINE || tt == TOK_EOF || tt == TOK_DEDENT {
+				break
+			}
+			p.pos++
 		}
 	} else {
 		modTok := p.peek()
@@ -255,34 +323,6 @@ func (p *Parser) parseImport() Node {
 		}
 	}
 	return imp
-}
-
-// ─── Block ────────────────────────────────────────────────────────────────────
-
-func (p *Parser) parseBlock(context string) []Node {
-	p.skipNewlines()
-	if !p.match(TOK_INDENT) {
-		t := p.peek()
-		p.addError(ErrExpectedIndent, t.Line, t.Col, t.LineStr, context)
-		return nil
-	}
-
-	var stmts []Node
-	p.skipNewlines()
-	for !p.check(TOK_DEDENT) && !p.check(TOK_EOF) {
-		stmt := p.parseStmt()
-		if stmt != nil {
-			stmts = append(stmts, stmt)
-		}
-		p.skipNewlines()
-	}
-	p.match(TOK_DEDENT)
-
-	if len(stmts) == 0 {
-		t := p.peek()
-		p.addError(ErrEmptyBody, t.Line, t.Col, t.LineStr)
-	}
-	return stmts
 }
 
 // ─── Statement ────────────────────────────────────────────────────────────────
@@ -328,7 +368,13 @@ func (p *Parser) parseStmt() Node {
 func (p *Parser) parseReturn() *ReturnStmt {
 	tok := p.advance()
 	rs := &ReturnStmt{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
-	if p.check(TOK_NEWLINE) || p.check(TOK_SEMICOL) || p.check(TOK_EOF) || p.check(TOK_DEDENT) {
+	// Check the raw stream for end-of-statement markers
+	if p.pos >= len(p.tokens) {
+		return rs
+	}
+	rawNext := p.tokens[p.pos].Type
+	if rawNext == TOK_NEWLINE || rawNext == TOK_SEMICOL ||
+		rawNext == TOK_EOF || rawNext == TOK_DEDENT {
 		return rs
 	}
 	rs.Value = p.parseExpr()
@@ -336,7 +382,7 @@ func (p *Parser) parseReturn() *ReturnStmt {
 }
 
 func (p *Parser) parseIf() *IfStmt {
-	tok := p.advance() // 'if'
+	tok := p.advance() // consume 'if'
 	is := &IfStmt{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
 	is.Cond = p.parseExpr()
 
@@ -381,7 +427,7 @@ func (p *Parser) parseWhile() *WhileStmt {
 }
 
 func (p *Parser) parseFor() *ForStmt {
-	tok := p.advance() // 'for'
+	tok := p.advance() // consume 'for'
 	fs := &ForStmt{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
 
 	varTok := p.peek()
@@ -392,7 +438,7 @@ func (p *Parser) parseFor() *ForStmt {
 	}
 	fs.Var = varTok.Value
 
-	// Optional type annotation: for x: int in ...
+	// optional type annotation:  for x: int in ...
 	if p.match(TOK_COLON) {
 		fs.VarType = p.parseTypeExpr()
 	}
@@ -424,7 +470,9 @@ func (p *Parser) parseGlobal() *GlobalStmt {
 	gs.Names = append(gs.Names, nt.Value)
 	for p.match(TOK_COMMA) {
 		nt = p.peek()
-		if nt.Type != TOK_IDENT { break }
+		if nt.Type != TOK_IDENT {
+			break
+		}
 		p.advance()
 		gs.Names = append(gs.Names, nt.Value)
 	}
@@ -444,7 +492,6 @@ func (p *Parser) parseExprOrAssign() Node {
 		return nil
 	}
 
-	// Check for assignment operators
 	t := p.peek()
 	switch t.Type {
 	case TOK_ASSIGN, TOK_PLUS_EQ, TOK_MINUS_EQ, TOK_STAR_EQ, TOK_SLASH_EQ:
@@ -457,7 +504,7 @@ func (p *Parser) parseExprOrAssign() Node {
 			Value:    val,
 		}
 	case TOK_COLON:
-		// typed declaration: name: type = expr
+		// typed declaration:  name: type = value
 		if id, ok := expr.(*Ident); ok {
 			p.advance() // consume ':'
 			typ := p.parseTypeExpr()
@@ -517,7 +564,7 @@ func (p *Parser) parseTypeExpr() *Type {
 	}
 }
 
-// ─── Expression Parsing (Pratt-style) ────────────────────────────────────────
+// ─── Expressions (Pratt-style precedence climbing) ────────────────────────────
 
 func (p *Parser) parseExpr() Node {
 	return p.parseTernary()
@@ -525,18 +572,48 @@ func (p *Parser) parseExpr() Node {
 
 func (p *Parser) parseTernary() Node {
 	expr := p.parseOr()
-	// Python ternary: value if cond else other
-	if p.check(TOK_IF) {
-		p.advance()
+	// Python ternary:  value if condition else other
+	// Only treat 'if' as ternary if we can find 'else' ahead before a colon/newline.
+	// A bare colon means this 'if' is an if-statement, not a ternary expression.
+	if p.check(TOK_IF) && p.hasTernaryElse() {
+		p.advance() // consume 'if'
 		cond := p.parseOr()
 		p.expect(TOK_ELSE)
 		other := p.parseTernary()
 		return &TernaryExpr{
 			BaseNode: BaseNode{Line: expr.GetLine(), Col: expr.GetCol()},
-			Then: expr, Cond: cond, Else: other,
+			Then:     expr,
+			Cond:     cond,
+			Else:     other,
 		}
 	}
 	return expr
+}
+
+// hasTernaryElse scans ahead to decide if the upcoming 'if' is a ternary.
+// Returns true only if 'else' appears before a statement-ending colon or newline.
+func (p *Parser) hasTernaryElse() bool {
+	depth := 0
+	for i := p.pos; i < len(p.tokens); i++ {
+		tt := p.tokens[i].Type
+		switch tt {
+		case TOK_LPAREN, TOK_LBRACKET, TOK_LBRACE:
+			depth++
+		case TOK_RPAREN, TOK_RBRACKET, TOK_RBRACE:
+			depth--
+		case TOK_ELSE:
+			if depth == 0 {
+				return true
+			}
+		case TOK_COLON:
+			if depth == 0 {
+				return false
+			}
+		case TOK_NEWLINE, TOK_DEDENT, TOK_EOF:
+			return false
+		}
+	}
+	return false
 }
 
 func (p *Parser) parseOr() Node {
@@ -589,13 +666,13 @@ func (p *Parser) parseComparison() Node {
 		case TOK_IS:
 			op = "=="
 		case TOK_IN:
-			// "x in list" — translate to contains
+			// x in collection  →  collection.contains(x)
 			p.advance()
 			right := p.parseBitOr()
 			left = &CallExpr{
 				BaseNode: BaseNode{Line: t.Line, Col: t.Col},
-				Func: &AttrExpr{Obj: right, Attr: "contains"},
-				Args: []Node{left},
+				Func:     &AttrExpr{Obj: right, Attr: "contains"},
+				Args:     []Node{left},
 			}
 			continue
 		default:
@@ -661,11 +738,11 @@ func (p *Parser) parseMulDiv() Node {
 	left := p.parseUnary()
 	for p.check(TOK_STAR) || p.check(TOK_SLASH) || p.check(TOK_PERCENT) || p.check(TOK_FLOORDIV) {
 		op := p.advance()
-		right := p.parseUnary()
 		opStr := op.Value
 		if opStr == "//" {
 			opStr = "FLOORDIV"
 		}
+		right := p.parseUnary()
 		left = &BinOp{BaseNode: BaseNode{Line: op.Line, Col: op.Col}, Op: opStr, Left: left, Right: right}
 	}
 	return left
@@ -693,7 +770,7 @@ func (p *Parser) parsePower() Node {
 	base := p.parsePostfix()
 	if p.check(TOK_POWER) {
 		op := p.advance()
-		exp := p.parseUnary() // right assoc
+		exp := p.parseUnary() // right-associative
 		return &BinOp{BaseNode: BaseNode{Line: op.Line, Col: op.Col}, Op: "**", Left: base, Right: exp}
 	}
 	return base
@@ -716,8 +793,11 @@ func (p *Parser) parsePostfix() Node {
 				return expr
 			}
 			p.advance()
-			attr := &AttrExpr{BaseNode: BaseNode{Line: t.Line, Col: t.Col}, Obj: expr, Attr: attrTok.Value}
-			expr = attr
+			expr = &AttrExpr{
+				BaseNode: BaseNode{Line: t.Line, Col: t.Col},
+				Obj:      expr,
+				Attr:     attrTok.Value,
+			}
 		default:
 			return expr
 		}
@@ -725,25 +805,53 @@ func (p *Parser) parsePostfix() Node {
 }
 
 func (p *Parser) parseCall(fn Node) *CallExpr {
-	tok := p.advance() // '('
+	tok := p.advance() // consume '('
 	call := &CallExpr{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}, Func: fn}
 
 	for !p.check(TOK_RPAREN) && !p.check(TOK_EOF) {
-		// keyword arg: name=value
-		if p.peek().Type == TOK_IDENT && p.pos+1 < len(p.tokens) {
-			next := p.tokens[p.pos+1]
-			if next.Type == TOK_ASSIGN {
-				nameTok := p.advance()
-				p.advance() // '='
-				val := p.parseExpr()
-				call.KwArgs = append(call.KwArgs, KwArg{Name: nameTok.Value, Value: val})
-				if !p.match(TOK_COMMA) { break }
-				continue
+		// Keyword argument detection: look for   ident =
+		// We need to scan the meaningful token stream: next token is IDENT
+		// and the one after is '=' (not '==').
+		nextTok := p.peek()
+		if nextTok.Type == TOK_IDENT {
+			// Find position of this IDENT in the raw stream
+			identPos := -1
+			for scan := p.pos; scan < len(p.tokens); scan++ {
+				tt := p.tokens[scan].Type
+				if tt == TOK_NEWLINE || tt == TOK_SEMICOL {
+					continue
+				}
+				identPos = scan
+				break
+			}
+			// Find the token after the IDENT
+			if identPos >= 0 && identPos+1 < len(p.tokens) {
+				afterPos := identPos + 1
+				for afterPos < len(p.tokens) {
+					tt := p.tokens[afterPos].Type
+					if tt == TOK_NEWLINE || tt == TOK_SEMICOL {
+						afterPos++
+						continue
+					}
+					break
+				}
+				if afterPos < len(p.tokens) && p.tokens[afterPos].Type == TOK_ASSIGN {
+					nameTok := p.advance() // consume IDENT
+					p.advance()            // consume '='
+					val := p.parseExpr()
+					call.KwArgs = append(call.KwArgs, KwArg{Name: nameTok.Value, Value: val})
+					if !p.match(TOK_COMMA) {
+						break
+					}
+					continue
+				}
 			}
 		}
 		arg := p.parseExpr()
 		call.Args = append(call.Args, arg)
-		if !p.match(TOK_COMMA) { break }
+		if !p.match(TOK_COMMA) {
+			break
+		}
 	}
 	t := p.peek()
 	if !p.match(TOK_RPAREN) {
@@ -753,8 +861,7 @@ func (p *Parser) parseCall(fn Node) *CallExpr {
 }
 
 func (p *Parser) parseIndex(obj Node) Node {
-	tok := p.advance() // '['
-	// slice?
+	tok := p.advance() // consume '['
 	var low, high, step Node
 	isSlice := false
 
@@ -779,7 +886,13 @@ func (p *Parser) parseIndex(obj Node) Node {
 	}
 
 	if isSlice {
-		return &SliceExpr{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}, Obj: obj, Low: low, High: high, Step: step}
+		return &SliceExpr{
+			BaseNode: BaseNode{Line: tok.Line, Col: tok.Col},
+			Obj:      obj,
+			Low:      low,
+			High:     high,
+			Step:     step,
+		}
 	}
 	return &IndexExpr{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}, Obj: obj, Index: low}
 }
@@ -817,7 +930,7 @@ func (p *Parser) parsePrimary() Node {
 
 	case TOK_IDENT:
 		p.advance()
-		// f-string  (f"...")
+		// f-string: f"..."
 		if t.Value == "f" && p.check(TOK_STRING_LIT) {
 			strTok := p.advance()
 			return p.parseFString(strTok)
@@ -836,36 +949,32 @@ func (p *Parser) parsePrimary() Node {
 	case TOK_LBRACE:
 		return p.parseDictLit()
 
-	// Built-in type names used as casts: int(...) float(...) str(...) bool(...)
+	// Built-in type keywords used as cast functions
 	case TOK_TYPE_INT:
 		p.advance()
 		if p.check(TOK_LPAREN) {
-			call := p.parseCall(&Ident{BaseNode: BaseNode{Line: t.Line, Col: t.Col}, Name: "int"})
-			return call
+			return p.parseCall(&Ident{BaseNode: BaseNode{Line: t.Line, Col: t.Col}, Name: "int"})
 		}
 		return &Ident{BaseNode: BaseNode{Line: t.Line, Col: t.Col}, Name: "int"}
 
 	case TOK_TYPE_FLOAT:
 		p.advance()
 		if p.check(TOK_LPAREN) {
-			call := p.parseCall(&Ident{BaseNode: BaseNode{Line: t.Line, Col: t.Col}, Name: "float"})
-			return call
+			return p.parseCall(&Ident{BaseNode: BaseNode{Line: t.Line, Col: t.Col}, Name: "float"})
 		}
 		return &Ident{BaseNode: BaseNode{Line: t.Line, Col: t.Col}, Name: "float"}
 
 	case TOK_TYPE_STR:
 		p.advance()
 		if p.check(TOK_LPAREN) {
-			call := p.parseCall(&Ident{BaseNode: BaseNode{Line: t.Line, Col: t.Col}, Name: "str"})
-			return call
+			return p.parseCall(&Ident{BaseNode: BaseNode{Line: t.Line, Col: t.Col}, Name: "str"})
 		}
 		return &Ident{BaseNode: BaseNode{Line: t.Line, Col: t.Col}, Name: "str"}
 
 	case TOK_TYPE_BOOL:
 		p.advance()
 		if p.check(TOK_LPAREN) {
-			call := p.parseCall(&Ident{BaseNode: BaseNode{Line: t.Line, Col: t.Col}, Name: "bool"})
-			return call
+			return p.parseCall(&Ident{BaseNode: BaseNode{Line: t.Line, Col: t.Col}, Name: "bool"})
 		}
 		return &Ident{BaseNode: BaseNode{Line: t.Line, Col: t.Col}, Name: "bool"}
 
@@ -880,11 +989,13 @@ func (p *Parser) parsePrimary() Node {
 }
 
 func (p *Parser) parseListLit() *ListLit {
-	tok := p.advance() // '['
+	tok := p.advance() // consume '['
 	ll := &ListLit{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
 	for !p.check(TOK_RBRACKET) && !p.check(TOK_EOF) {
 		ll.Elems = append(ll.Elems, p.parseExpr())
-		if !p.match(TOK_COMMA) { break }
+		if !p.match(TOK_COMMA) {
+			break
+		}
 	}
 	t := p.peek()
 	if !p.match(TOK_RBRACKET) {
@@ -894,7 +1005,7 @@ func (p *Parser) parseListLit() *ListLit {
 }
 
 func (p *Parser) parseDictLit() *DictLit {
-	tok := p.advance() // '{'
+	tok := p.advance() // consume '{'
 	dl := &DictLit{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
 	for !p.check(TOK_RBRACE) && !p.check(TOK_EOF) {
 		k := p.parseExpr()
@@ -902,7 +1013,9 @@ func (p *Parser) parseDictLit() *DictLit {
 		v := p.parseExpr()
 		dl.Keys = append(dl.Keys, k)
 		dl.Vals = append(dl.Vals, v)
-		if !p.match(TOK_COMMA) { break }
+		if !p.match(TOK_COMMA) {
+			break
+		}
 	}
 	t := p.peek()
 	if !p.match(TOK_RBRACE) {
@@ -912,7 +1025,7 @@ func (p *Parser) parseDictLit() *DictLit {
 }
 
 func (p *Parser) parseNew() *NewExpr {
-	tok := p.advance() // 'new'
+	tok := p.advance() // consume 'new'
 	nameTok := p.peek()
 	name := nameTok.Value
 	if nameTok.Type != TOK_IDENT {
@@ -924,7 +1037,9 @@ func (p *Parser) parseNew() *NewExpr {
 	if p.match(TOK_LPAREN) {
 		for !p.check(TOK_RPAREN) && !p.check(TOK_EOF) {
 			ne.Args = append(ne.Args, p.parseExpr())
-			if !p.match(TOK_COMMA) { break }
+			if !p.match(TOK_COMMA) {
+				break
+			}
 		}
 		p.expect(TOK_RPAREN)
 	}
@@ -972,6 +1087,3 @@ func (p *Parser) parseFString(strTok Token) *FStringExpr {
 
 // Expose parse errors
 func (p *Parser) Errors() []PycError { return p.errors }
-
-// Helper to format an int for error messages
-func fmtInt(n int) string { return fmt.Sprintf("%d", n) }

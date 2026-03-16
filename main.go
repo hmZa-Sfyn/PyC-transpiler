@@ -13,7 +13,7 @@ const version = "0.1.0"
 const helpText = `
 ╔═══════════════════════════════════════════════════════╗
 ║          PyC — Python-like → C Transpiler             ║
-║                    v` + version + `                          ║
+║                    v0.1.0                             ║
 ╚═══════════════════════════════════════════════════════╝
 
 USAGE:
@@ -25,26 +25,27 @@ COMMANDS:
   emit    <file.pyc>            Emit C code to stdout
   run     <file.pyc> [args...]  Build and run immediately
   version                       Print version
+  help                          Show this help
 
 OPTIONS:
-  -o <output>    Output binary name (default: file without extension)
-  -c <output>    Write C output to file instead of temp file
-  -O <level>     GCC optimization level 0-3 (default: 0)
-  -g             Include debug info
+  -o <name>      Output binary name (default: file without extension)
+  -c <file>      Write C output to this file instead of a temp file
+  -O<level>      GCC optimization level 0-3 (default: 0)
+  -g             Include debug info (passed to gcc)
   -nocolor       Disable colored error output
-  --             Pass remaining args to the compiled program
+  --             Pass remaining args to the compiled program (for 'run')
 
 LANGUAGE FEATURES:
   • Python-like syntax (def, if/elif/else, while, for..in)
-  • Static typing with type inference: x = 42  →  long long x = 42;
+  • Type inference:   x = 42  →  long long x = 42;
   • Explicit types:   x: int = 42
-  • Function return types:  def add(a: int, b: int) -> int:
-  • Structs:  struct Point: ...
-  • Lists:    x: list[int] = [1, 2, 3]
-  • F-strings: f"Hello {name}!"
-  • Built-ins: print, len, int, str, float, range, append, ...
-  • Methods:  s.upper(), s.startswith(), lst.append(), ...
-  • new/delete for heap allocation
+  • Return types:     def add(a: int, b: int) -> int:
+  • Structs:          struct Point:
+  • Lists:            x: list[int] = [1, 2, 3]
+  • F-strings:        f"Hello {name}!"
+  • Built-ins:        print, len, int, str, float, range, append, ...
+  • Methods:          s.upper()  s.startswith()  lst.append()  ...
+  • Heap alloc:       new / delete
 
 EXAMPLE:
   # hello.pyc
@@ -69,24 +70,27 @@ func main() {
 	debugInfo := false
 	noColor   := false
 	command   := ""
-	var files []string
+	var files    []string
 	var passArgs []string
 
 	i := 0
 	for i < len(args) {
 		arg := args[i]
 		switch {
-		case arg == "build" || arg == "check" || arg == "emit" || arg == "run" || arg == "version":
+		case arg == "build" || arg == "check" || arg == "emit" ||
+			arg == "run" || arg == "version" || arg == "help":
 			command = arg
 		case arg == "-o" && i+1 < len(args):
-			i++; outputBin = args[i]
+			i++
+			outputBin = args[i]
 		case arg == "-c" && i+1 < len(args):
-			i++; outputC = args[i]
+			i++
+			outputC = args[i]
 		case arg == "-g":
 			debugInfo = true
 		case arg == "--nocolor" || arg == "-nocolor":
 			noColor = true
-		case strings.HasPrefix(arg, "-O") && len(arg) == 3:
+		case len(arg) == 3 && strings.HasPrefix(arg, "-O"):
 			optLevel = string(arg[2])
 		case arg == "--":
 			passArgs = args[i+1:]
@@ -94,23 +98,30 @@ func main() {
 		case strings.HasSuffix(arg, ".pyc"):
 			files = append(files, arg)
 		default:
-			// might be positional after command
-			if command == "" {
-				fmt.Fprintf(os.Stderr, "Unknown option: %s\n", arg)
+			// If a command is already set, treat unknown args as files.
+			// Otherwise print error.
+			if command != "" {
+				files = append(files, arg)
+			} else {
+				fmt.Fprintf(os.Stderr, "Unknown option: %s\nRun 'pyc help' for usage.\n", arg)
 				os.Exit(1)
 			}
-			files = append(files, arg)
 		}
 		i++
 	}
 
+	// Handle help / version early
+	if command == "help" {
+		fmt.Print(helpText)
+		os.Exit(0)
+	}
 	if command == "version" {
 		fmt.Println("PyC version", version)
 		os.Exit(0)
 	}
 
+	// Default command when a .pyc file is given with no command
 	if command == "" {
-		// Default: build
 		if len(files) > 0 {
 			command = "build"
 		} else {
@@ -138,14 +149,10 @@ func main() {
 	tokens, lexErrs := lexer.Tokenize()
 
 	if len(lexErrs) > 0 {
-		if !noColor {
-			PrintErrors(lexErrs, sourceFile)
-		} else {
-			for _, e := range lexErrs {
-				fmt.Fprintf(os.Stderr, "%s:%d:%d: %s: %s\n", sourceFile, e.Line, e.Col, e.Sev, e.Msg)
-			}
+		printErrs(lexErrs, sourceFile, noColor)
+		if HasErrors(lexErrs) {
+			os.Exit(1)
 		}
-		if HasErrors(lexErrs) { os.Exit(1) }
 	}
 
 	// 2. Parse
@@ -154,35 +161,25 @@ func main() {
 	parseErrs := parser.Errors()
 
 	if len(parseErrs) > 0 {
-		if !noColor {
-			PrintErrors(parseErrs, sourceFile)
-		} else {
-			for _, e := range parseErrs {
-				fmt.Fprintf(os.Stderr, "%s:%d:%d: %s: %s\n", sourceFile, e.Line, e.Col, e.Sev, e.Msg)
-			}
+		printErrs(parseErrs, sourceFile, noColor)
+		if HasErrors(parseErrs) {
+			os.Exit(1)
 		}
-		if HasErrors(parseErrs) { os.Exit(1) }
 	}
 
 	// 3. Type Check
 	checker := NewTypeChecker(sourceFile, string(source))
 	typeErrs := checker.Check(prog)
 
-	allErrs := append(lexErrs, append(parseErrs, typeErrs...)...)
-	allErrs = dedupeErrors(allErrs)
-
 	if len(typeErrs) > 0 {
-		if !noColor {
-			PrintErrors(typeErrs, sourceFile)
-		} else {
-			for _, e := range typeErrs {
-				fmt.Fprintf(os.Stderr, "%s:%d:%d: %s: %s\n", sourceFile, e.Line, e.Col, e.Sev, e.Msg)
-			}
+		printErrs(typeErrs, sourceFile, noColor)
+		if HasErrors(typeErrs) {
+			os.Exit(1)
 		}
-		if HasErrors(typeErrs) { os.Exit(1) }
 	}
 
 	if command == "check" {
+		allErrs := dedupeErrors(append(lexErrs, append(parseErrs, typeErrs...)...))
 		if !HasErrors(allErrs) {
 			fmt.Printf("%s✓ %s — no errors%s\n", colorGreen, sourceFile, colorReset)
 		}
@@ -206,10 +203,14 @@ func main() {
 		os.Exit(0)
 	}
 
-	// 5. Write C file
+	// 5. Write C file (temp or named)
 	var cFile string
 	if outputC != "" {
 		cFile = outputC
+		if err := os.WriteFile(cFile, []byte(cCode), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "error writing C file: %v\n", err)
+			os.Exit(1)
+		}
 	} else {
 		tmp, err := os.CreateTemp("", "pyc_*.c")
 		if err != nil {
@@ -217,21 +218,21 @@ func main() {
 			os.Exit(1)
 		}
 		cFile = tmp.Name()
+		if _, err := tmp.WriteString(cCode); err != nil {
+			fmt.Fprintf(os.Stderr, "error writing temp C file: %v\n", err)
+			os.Exit(1)
+		}
 		tmp.Close()
 		defer os.Remove(cFile)
 	}
 
-	if err := os.WriteFile(cFile, []byte(cCode), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "error writing C file: %v\n", err)
-		os.Exit(1)
-	}
-
-	// 6. Compile with GCC
+	// 6. Derive output binary name
 	if outputBin == "" {
 		base := filepath.Base(sourceFile)
 		outputBin = strings.TrimSuffix(base, filepath.Ext(base))
 	}
 
+	// 7. Compile with GCC
 	gccArgs := []string{
 		"-o", outputBin,
 		cFile,
@@ -241,6 +242,7 @@ func main() {
 		"-Wno-unused-value",
 		"-Wno-int-conversion",
 		"-Wno-incompatible-pointer-types",
+		"-Wno-implicit-function-declaration",
 	}
 	if debugInfo {
 		gccArgs = append(gccArgs, "-g")
@@ -249,13 +251,12 @@ func main() {
 	gccCmd := exec.Command("gcc", gccArgs...)
 	gccOut, gccErr := gccCmd.CombinedOutput()
 	if gccErr != nil {
-		fmt.Fprintf(os.Stderr, "%sGCC compilation failed:%s\n%s\n", colorRed+colorBold, colorReset, string(gccOut))
-		fmt.Fprintf(os.Stderr, "Generated C file kept at: %s\n", cFile)
-		if outputC == "" {
-			// don't delete — user might want to inspect
-			fmt.Fprintf(os.Stderr, "(copy of C source written to %s.c for inspection)\n", outputBin)
-			os.WriteFile(outputBin+".c", []byte(cCode), 0644)
-		}
+		fmt.Fprintf(os.Stderr, "%s%sGCC compilation failed:%s\n%s\n",
+			colorRed, colorBold, colorReset, string(gccOut))
+		// Save C source for inspection
+		inspectFile := outputBin + "_debug.c"
+		_ = os.WriteFile(inspectFile, []byte(cCode), 0644)
+		fmt.Fprintf(os.Stderr, "Generated C saved to: %s\n", inspectFile)
 		os.Exit(1)
 	}
 
@@ -264,7 +265,7 @@ func main() {
 	}
 
 	if command == "build" {
-		fmt.Printf("%s✓ Built %s%s\n", colorGreen, outputBin, colorReset)
+		fmt.Printf("%s✓ Built '%s'%s\n", colorGreen, outputBin, colorReset)
 		os.Exit(0)
 	}
 
@@ -274,17 +275,29 @@ func main() {
 		cmd.Stdin  = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		err := cmd.Run()
-		// cleanup binary after run
-		os.Remove(outputBin)
-		if err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
+		runErr := cmd.Run()
+		os.Remove(outputBin) // clean up binary after run
+		if runErr != nil {
+			if exitErr, ok := runErr.(*exec.ExitError); ok {
 				os.Exit(exitErr.ExitCode())
 			}
-			fmt.Fprintf(os.Stderr, "run error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "run error: %v\n", runErr)
 			os.Exit(1)
 		}
 		os.Exit(0)
+	}
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+func printErrs(errs []PycError, filename string, noColor bool) {
+	if noColor {
+		for _, e := range errs {
+			fmt.Fprintf(os.Stderr, "%s:%d:%d: %s[E%03d]: %s\n",
+				filename, e.Line, e.Col, e.Sev, int(e.Code), e.Msg)
+		}
+	} else {
+		PrintErrors(errs, filename)
 	}
 }
 

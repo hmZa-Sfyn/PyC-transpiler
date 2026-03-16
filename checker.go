@@ -287,8 +287,11 @@ func (tc *TypeChecker) checkStmt(node Node) {
 }
 
 func (tc *TypeChecker) checkFuncDef(n *FuncDef) {
+	// Only warn if the name shadows a top-level builtin function, not method names
 	if _, ok := builtins[n.Name]; ok {
-		tc.addError(ErrShadowBuiltin, n.Line, n.Col, n.Name)
+		if isTopLevelBuiltin(n.Name) {
+			tc.addError(ErrShadowBuiltin, n.Line, n.Col, n.Name)
+		}
 	}
 	// Check duplicate params
 	seen := map[string]bool{}
@@ -307,20 +310,79 @@ func (tc *TypeChecker) checkFuncDef(n *FuncDef) {
 		tc.scope.define(&Symbol{Name: p.Name, Type: p.Type, Used: true, Line: p.Line, Col: p.Col})
 	}
 
-	hasReturn := false
 	for _, stmt := range n.Body {
 		tc.checkStmt(stmt)
-		if _, ok := stmt.(*ReturnStmt); ok {
-			hasReturn = true
-		}
 	}
 
-	if !typesEqual(n.ReturnType, TypVoid) && !hasReturn && n.ReturnType.Kind != TyAny {
-		tc.addError(ErrNonVoidNoReturn, n.Line, n.Col, n.Name, n.ReturnType.String())
+	// Check that non-void functions always return on all paths
+	if !typesEqual(n.ReturnType, TypVoid) && n.ReturnType.Kind != TyAny {
+		if !bodyAlwaysReturns(n.Body) {
+			tc.addError(ErrNonVoidNoReturn, n.Line, n.Col, n.Name, n.ReturnType.String())
+		}
 	}
 
 	tc.popScope()
 	tc.currentFunc = prev
+}
+
+// isTopLevelBuiltin returns true only for functions that should be called as
+// standalone builtins (not method names like "count", "split", etc.)
+func isTopLevelBuiltin(name string) bool {
+	topLevel := map[string]bool{
+		"print": true, "println": true, "input": true, "len": true,
+		"int": true, "float": true, "str": true, "bool": true,
+		"abs": true, "max": true, "min": true, "range": true,
+		"append": true, "exit": true, "assert": true,
+		"ord": true, "chr": true, "hex": true, "oct": true, "bin": true,
+		"pow": true, "sqrt": true, "floor": true, "ceil": true, "round": true,
+		"type_of": true, "sleep": true, "rand_int": true, "rand_float": true,
+		"open": true, "close": true, "read": true, "write": true,
+		"printf": true, "scanf": true,
+	}
+	return topLevel[name]
+}
+
+// bodyAlwaysReturns returns true if every execution path through stmts
+// ends in a return statement.
+func bodyAlwaysReturns(stmts []Node) bool {
+	for i := len(stmts) - 1; i >= 0; i-- {
+		stmt := stmts[i]
+		switch s := stmt.(type) {
+		case *ReturnStmt:
+			return true
+		case *IfStmt:
+			if stmtAlwaysReturns(s) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// stmtAlwaysReturns returns true if a single statement always returns.
+func stmtAlwaysReturns(stmt Node) bool {
+	switch s := stmt.(type) {
+	case *ReturnStmt:
+		return true
+	case *IfStmt:
+		// Must have an else clause, and every branch must return
+		if s.ElseBody == nil {
+			return false
+		}
+		if !bodyAlwaysReturns(s.Then) {
+			return false
+		}
+		for _, elif := range s.Elifs {
+			if !bodyAlwaysReturns(elif.Body) {
+				return false
+			}
+		}
+		if !bodyAlwaysReturns(s.ElseBody) {
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 func (tc *TypeChecker) checkStructDef(n *StructDef) {
@@ -337,7 +399,7 @@ func (tc *TypeChecker) checkStructDef(n *StructDef) {
 }
 
 func (tc *TypeChecker) checkVarDecl(n *VarDecl) {
-	if _, ok := builtins[n.Name]; ok {
+	if isTopLevelBuiltin(n.Name) {
 		tc.addError(ErrShadowBuiltin, n.Line, n.Col, n.Name)
 	}
 	var valType *Type
@@ -425,19 +487,48 @@ func (tc *TypeChecker) checkReturn(n *ReturnStmt) {
 
 func (tc *TypeChecker) checkIf(n *IfStmt) {
 	tc.checkExpr(n.Cond)
-	tc.pushScope()
-	for _, s := range n.Then { tc.checkStmt(s) }
-	tc.popScope()
+	tc.checkBranchBody(n.Then)
 	for _, elif := range n.Elifs {
 		tc.checkExpr(elif.Cond)
-		tc.pushScope()
-		for _, s := range elif.Body { tc.checkStmt(s) }
-		tc.popScope()
+		tc.checkBranchBody(elif.Body)
 	}
 	if n.ElseBody != nil {
-		tc.pushScope()
-		for _, s := range n.ElseBody { tc.checkStmt(s) }
-		tc.popScope()
+		tc.checkBranchBody(n.ElseBody)
+	}
+}
+
+// checkBranchBody checks a branch body in a sub-scope, then promotes any
+// newly defined variables up to the parent scope (Python has flat scoping —
+// variables assigned inside if/elif/else branches are visible after the block).
+func (tc *TypeChecker) checkBranchBody(stmts []Node) {
+	tc.pushScope()
+	for _, s := range stmts {
+		tc.checkStmt(s)
+	}
+	// Promote vars defined in this branch to parent scope.
+	// Mark them as Used=true so they don't trigger unused-var warnings here;
+	// the parent scope will track actual usage.
+	promoted := tc.scope.vars
+	tc.scope = tc.scope.parent // manual pop without unused-var warnings
+	for name, sym := range promoted {
+		if sym.IsFunc {
+			continue
+		}
+		if _, exists := tc.scope.vars[name]; !exists {
+			// Copy to parent scope, mark used so sub-scope doesn't re-warn
+			parentSym := &Symbol{
+				Name: sym.Name, Type: sym.Type,
+				Line: sym.Line, Col: sym.Col, LineStr: sym.LineStr,
+				Used: false, // parent scope tracks real usage
+			}
+			tc.scope.define(parentSym)
+		} else {
+			// Already in parent (e.g. declared before the if); mark as used
+			// if it was used in this branch
+			if sym.Used {
+				tc.scope.vars[name].Used = true
+			}
+		}
 	}
 }
 
