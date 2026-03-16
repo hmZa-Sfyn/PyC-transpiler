@@ -123,6 +123,7 @@ func (g *CGen) Generate(prog *Program) string {
 	out.WriteString("#include <math.h>\n")
 	out.WriteString("#include <time.h>\n")
 	out.WriteString("#include <ctype.h>\n")
+	out.WriteString("#include <stdint.h>\n")
 	out.WriteString("\n")
 
 	// Runtime
@@ -437,7 +438,9 @@ func (g *CGen) genFunc(fn *FuncDef) string {
 	for _, stmt := range fn.Body {
 		g.genStmt(stmt)
 	}
-	if typesEqual(fn.ReturnType, TypVoid) {
+	if fn.Name == "main" {
+		g.wl("return 0;")
+	} else if typesEqual(fn.ReturnType, TypVoid) {
 		g.wl("return;")
 	}
 	g.indent = 0
@@ -487,6 +490,9 @@ func (g *CGen) genStmt(node Node) {
 		g.wl("/* note: nested function %s not supported in C */", n.Name)
 	case *ImportStmt:
 		// handled at top level
+	default:
+		// Try smalltalk nodes
+		g.genSmallTalkStmt(node)
 	}
 }
 
@@ -562,6 +568,15 @@ func (g *CGen) genReturn(n *ReturnStmt) {
 }
 
 func (g *CGen) genIf(n *IfStmt) {
+	// Pre-declare any variables that are first assigned inside branches,
+	// so they are visible across all branches and after the if block (Python scoping).
+	allBranchStmts := append([]Node{}, n.Then...)
+	for _, elif := range n.Elifs { allBranchStmts = append(allBranchStmts, elif.Body...) }
+	allBranchStmts = append(allBranchStmts, n.ElseBody...)
+	for _, s := range allBranchStmts {
+		g.predeclareFromStmt(s)
+	}
+
 	cond := g.genExpr(n.Cond)
 	g.wl("if (%s) {", cond)
 	g.indent++
@@ -581,6 +596,47 @@ func (g *CGen) genIf(n *IfStmt) {
 		g.indent--
 	}
 	g.wl("}")
+}
+
+// predeclareFromStmt emits a zero-initialized variable declaration for any
+// new variable that would be first assigned inside an if/elif/else branch.
+// This gives Python-style flat scoping in the generated C code.
+func (g *CGen) predeclareFromStmt(s Node) {
+	var name string
+	var inferFrom Node
+
+	switch n := s.(type) {
+	case *AssignStmt:
+		if id, ok := n.Target.(*Ident); ok {
+			name = id.Name
+			inferFrom = n.Value
+		}
+	case *VarDecl:
+		return // VarDecl already handles its own declaration
+	default:
+		return
+	}
+
+	if name == "" || g.lookupVarType(name) != nil {
+		return // already declared
+	}
+
+	t := g.inferExprType(inferFrom)
+	ct := g.cType(t)
+	// emit zero-init declaration
+	switch t.Kind {
+	case TyStr:
+		g.wl("%s %s = NULL;", ct, name)
+	case TyFloat:
+		g.wl("%s %s = 0.0;", ct, name)
+	case TyBool:
+		g.wl("%s %s = 0;", ct, name)
+	case TyList:
+		g.wl("%s %s = NULL;", ct, name)
+	default:
+		g.wl("%s %s = 0;", ct, name)
+	}
+	g.setVarType(name, t)
 }
 
 func (g *CGen) genWhile(n *WhileStmt) {
@@ -703,6 +759,11 @@ func (g *CGen) genExpr(node Node) string {
 		return g.genFString(n)
 	case *NewExpr:
 		return g.genNew(n)
+	// Smalltalk expressions
+	case *ClampExpr, *BetweenExpr, *EitherExpr:
+		if s, ok := g.genSmallTalkExpr(node); ok {
+			return s
+		}
 	}
 	return "0"
 }
@@ -856,19 +917,27 @@ func (g *CGen) genNamedCall(name string, args []Node) string {
 			t := g.inferExprType(args[0])
 			arg := g.genExpr(args[0])
 			if t != nil && t.Kind == TyInt {
-				return fmt.Sprintf("llabs(%s)", arg)
+				return fmt.Sprintf("(long long)llabs(%s)", arg)
 			}
-			return fmt.Sprintf("fabs(%s)", arg)
+			return fmt.Sprintf("fabs((double)(%s))", arg)
 		}
 	case "max":
 		if len(args) == 2 {
 			a, b := g.genExpr(args[0]), g.genExpr(args[1])
-			return fmt.Sprintf("((%s) > (%s) ? (%s) : (%s))", a, b, a, b)
+			t := g.inferExprType(args[0])
+			if t != nil && t.Kind == TyFloat {
+				return fmt.Sprintf("(double)((%s) > (%s) ? (%s) : (%s))", a, b, a, b)
+			}
+			return fmt.Sprintf("(long long)((%s) > (%s) ? (%s) : (%s))", a, b, a, b)
 		}
 	case "min":
 		if len(args) == 2 {
 			a, b := g.genExpr(args[0]), g.genExpr(args[1])
-			return fmt.Sprintf("((%s) < (%s) ? (%s) : (%s))", a, b, a, b)
+			t := g.inferExprType(args[0])
+			if t != nil && t.Kind == TyFloat {
+				return fmt.Sprintf("(double)((%s) < (%s) ? (%s) : (%s))", a, b, a, b)
+			}
+			return fmt.Sprintf("(long long)((%s) < (%s) ? (%s) : (%s))", a, b, a, b)
 		}
 	case "range":
 		switch len(args) {
@@ -1117,13 +1186,13 @@ func (g *CGen) genMethodCall(attr *AttrExpr, args []Node) string {
 		return fmt.Sprintf("%s->%s", obj, method)
 	}
 
-	// Fallback
+	// Fallback: emit a direct C call with obj as first arg
 	var cargs []string
 	for _, a := range args { cargs = append(cargs, g.genExpr(a)) }
 	if len(cargs) > 0 {
-		return fmt.Sprintf("%s_%s(%s, %s)", objType.String(), method, obj, strings.Join(cargs, ", "))
+		return fmt.Sprintf("pyc_%s_%s(%s, %s)", objType.String(), method, obj, strings.Join(cargs, ", "))
 	}
-	return fmt.Sprintf("%s_%s(%s)", objType.String(), method, obj)
+	return fmt.Sprintf("pyc_%s_%s(%s)", objType.String(), method, obj)
 }
 
 func (g *CGen) genIndex(n *IndexExpr) string {
@@ -1263,6 +1332,16 @@ func (g *CGen) inferExprType(node Node) *Type {
 			if sig, ok := builtins[id.Name]; ok { return sig.RetType }
 			if fn, ok := g.functions[id.Name]; ok { return fn.ReturnType }
 		}
+		if attr, ok := n.Func.(*AttrExpr); ok {
+			objT := g.inferExprType(attr.Obj)
+			if objT != nil && objT.Kind == TyStr {
+				if sig, ok := strMethods[attr.Attr]; ok { return sig.RetType }
+				return TypStr
+			}
+			if objT != nil && objT.Kind == TyList {
+				if sig, ok := listMethods[attr.Attr]; ok { return sig.RetType }
+			}
+		}
 		return TypAny
 	case *IndexExpr:
 		t := g.inferExprType(n.Obj)
@@ -1273,6 +1352,7 @@ func (g *CGen) inferExprType(node Node) *Type {
 		t := g.inferExprType(n.Obj)
 		if t != nil && t.Kind == TyStr {
 			if sig, ok := strMethods[n.Attr]; ok { return sig.RetType }
+			return TypStr // unknown str method still returns str by default
 		}
 		if t != nil && t.Kind == TyList {
 			if sig, ok := listMethods[n.Attr]; ok { return sig.RetType }
@@ -1289,4 +1369,185 @@ func (g *CGen) inferExprType(node Node) *Type {
 		return StructType(n.TypeName)
 	}
 	return TypAny
+}
+
+// ─── Smalltalk / One-liner Code Generation ────────────────────────────────────
+
+func (g *CGen) genSmallTalkStmt(node Node) bool {
+	switch n := node.(type) {
+
+	case *IfTrueStmt:
+		cond := g.genExpr(n.Cond)
+		if n.Negated {
+			g.wl("if (!(%s)) {", cond)
+		} else {
+			g.wl("if (%s) {", cond)
+		}
+		g.indent++
+		g.genStmt(n.Body)
+		g.indent--
+		g.wl("}")
+		return true
+
+	case *RepeatStmt:
+		cnt := g.genExpr(n.Count)
+		tmp := fmt.Sprintf("_pyc_rep_%d", n.Line)
+		g.wl("for (long long %s = 0; %s < (long long)(%s); %s++) {", tmp, tmp, cnt, tmp)
+		g.indent++
+		g.genStmt(n.Body)
+		g.indent--
+		g.wl("}")
+		return true
+
+	case *EachStmt:
+		iter := n.Iter
+		if call, ok := iter.(*CallExpr); ok {
+			if id, ok2 := call.Func.(*Ident); ok2 && id.Name == "range" {
+				// each x in range(...): stmt  →  optimised C for loop
+				fakeFor := &ForStmt{
+					BaseNode: n.BaseNode, Var: n.Var,
+					Iter: n.Iter, Body: []Node{n.Body},
+				}
+				g.pushVarScope()
+				g.genForRange(fakeFor, call)
+				g.popVarScope()
+				return true
+			}
+		}
+		iterExpr := g.genExpr(n.Iter)
+		tmpList := fmt.Sprintf("_pyc_each_lst_%d", n.Line)
+		tmpIdx := fmt.Sprintf("_pyc_each_i_%d", n.Line)
+		t := g.inferExprType(n.Iter)
+		elemT := TypAny
+		if t != nil && t.Kind == TyList && t.ElemType != nil {
+			elemT = t.ElemType
+		}
+		g.wl("PycList* %s = %s;", tmpList, iterExpr)
+		g.wl("for (long long %s = 0; %s < pyc_list_len(%s); %s++) {", tmpIdx, tmpIdx, tmpList, tmpIdx)
+		g.indent++
+		g.pushVarScope()
+		ct := g.cType(elemT)
+		if elemT.Kind == TyInt {
+			g.wl("%s %s = (long long)(intptr_t)pyc_list_get(%s, %s);", ct, n.Var, tmpList, tmpIdx)
+		} else if elemT.Kind == TyStr {
+			g.wl("%s %s = (char*)pyc_list_get(%s, %s);", ct, n.Var, tmpList, tmpIdx)
+		} else {
+			g.wl("void* %s = pyc_list_get(%s, %s);", n.Var, tmpList, tmpIdx)
+		}
+		g.setVarType(n.Var, elemT)
+		g.genStmt(n.Body)
+		g.popVarScope()
+		g.indent--
+		g.wl("}")
+		return true
+
+	case *LoopStmt:
+		g.wl("while (1) {")
+		g.indent++
+		g.pushVarScope()
+		for _, s := range n.Body { g.genStmt(s) }
+		g.popVarScope()
+		g.indent--
+		g.wl("}")
+		return true
+
+	case *UntilStmt:
+		cond := g.genExpr(n.Cond)
+		g.wl("while (!(%s)) {", cond)
+		g.indent++
+		g.pushVarScope()
+		for _, s := range n.Body { g.genStmt(s) }
+		g.popVarScope()
+		g.indent--
+		g.wl("}")
+		return true
+
+	case *SwapStmt:
+		at := g.inferExprType(n.A)
+		ct := g.cType(at)
+		a := g.genExpr(n.A)
+		b := g.genExpr(n.B)
+		tmp := fmt.Sprintf("_pyc_swap_%d", n.Line)
+		g.wl("%s %s = %s;", ct, tmp, a)
+		g.wl("%s = %s;", a, b)
+		g.wl("%s = %s;", b, tmp)
+		return true
+
+	case *DefaultStmt:
+		target := g.genExpr(n.Target)
+		val := g.genExpr(n.Value)
+		t := g.inferExprType(n.Target)
+		if t != nil && t.Kind == TyStr {
+			g.wl("if (%s == NULL || %s[0] == '\\0') { %s = %s; }", target, target, target, val)
+		} else {
+			g.wl("if (!(%s)) { %s = %s; }", target, target, val)
+		}
+		return true
+
+	case *CheckStmt:
+		cond := g.genExpr(n.Expr)
+		ls := strings.ReplaceAll(n.LineStr, "\"", "\\\"")
+		if ls == "" { ls = "check failed" }
+		g.wl("pyc_assert((int)(%s), \"%s\");", cond, ls)
+		return true
+
+	case *DieStmt:
+		msg := g.genExpr(n.Msg)
+		t := g.inferExprType(n.Msg)
+		if t != nil && t.Kind == TyStr {
+			g.wl("{ fprintf(stderr, \"fatal: %%s\\n\", %s); exit(1); }", msg)
+		} else {
+			g.wl("{ fprintf(stderr, \"fatal error\\n\"); exit(1); }")
+		}
+		return true
+
+	case *MaybeStmt:
+		expr := g.genExpr(n.Expr)
+		t := g.inferExprType(n.Expr)
+		if t != nil && (t.Kind == TyStr || t.Kind == TyList || t.Kind == TyStruct || t.Kind == TyAny) {
+			// Only execute if non-null
+			g.wl("if (%s) { (void)(%s); }", expr, expr)
+		} else {
+			g.wl("(void)(%s);", expr)
+		}
+		return true
+
+	case *PrintBangStmt:
+		printExpr := g.genPrint(n.Args, true)
+		g.wl("%s;", printExpr)
+		return true
+	}
+	return false
+}
+
+func (g *CGen) genSmallTalkExpr(node Node) (string, bool) {
+	switch n := node.(type) {
+	case *ClampExpr:
+		val := g.genExpr(n.Val)
+		lo := g.genExpr(n.Lo)
+		hi := g.genExpr(n.Hi)
+		t := g.inferExprType(n.Val)
+		if t != nil && t.Kind == TyFloat {
+			return fmt.Sprintf("(double)((%s) < (%s) ? (%s) : ((%s) > (%s) ? (%s) : (%s)))",
+				val, lo, lo, val, hi, hi, val), true
+		}
+		return fmt.Sprintf("(long long)((%s) < (%s) ? (%s) : ((%s) > (%s) ? (%s) : (%s)))",
+			val, lo, lo, val, hi, hi, val), true
+
+	case *BetweenExpr:
+		val := g.genExpr(n.Val)
+		lo := g.genExpr(n.Lo)
+		hi := g.genExpr(n.Hi)
+		return fmt.Sprintf("((%s) >= (%s) && (%s) <= (%s))", val, lo, val, hi), true
+
+	case *EitherExpr:
+		a := g.genExpr(n.A)
+		b := g.genExpr(n.B)
+		t := g.inferExprType(n.A)
+		if t != nil && t.Kind == TyStr {
+			return fmt.Sprintf("((%s) && (%s)[0] ? (%s) : (%s))", a, a, a, b), true
+		}
+		return fmt.Sprintf("((%s) ? (%s) : (%s))", a, a, b), true
+	}
+	return "", false
 }

@@ -11,14 +11,12 @@ import (
 type TokenType string
 
 const (
-	// Literals
 	TOK_INT_LIT    TokenType = "INT_LIT"
 	TOK_FLOAT_LIT  TokenType = "FLOAT_LIT"
 	TOK_STRING_LIT TokenType = "STRING_LIT"
 	TOK_BOOL_LIT   TokenType = "BOOL_LIT"
 	TOK_NONE       TokenType = "NONE"
 
-	// Identifiers & Keywords
 	TOK_IDENT  TokenType = "IDENT"
 	TOK_DEF    TokenType = "def"
 	TOK_RETURN TokenType = "return"
@@ -44,6 +42,36 @@ const (
 	TOK_NEW    TokenType = "new"
 	TOK_DELETE TokenType = "delete"
 
+	// ── Smalltalk / one-liner keywords ───────────────────────────────────────
+	// Control flow
+	TOK_IFTRUE  TokenType = "iftrue"  // iftrue cond: stmt
+	TOK_IFFALSE TokenType = "iffalse" // iffalse cond: stmt
+	TOK_UNLESS  TokenType = "unless"  // unless cond: stmt   (alias iffalse)
+	TOK_UNTIL   TokenType = "until"   // until cond: body    (while not)
+	TOK_LOOP    TokenType = "loop"    // loop: body          (infinite loop)
+	TOK_FOREVER TokenType = "forever" // forever: body       (alias loop)
+	TOK_REPEAT  TokenType = "repeat"  // repeat n: stmt      (loop n times)
+	TOK_TIMES   TokenType = "times"   // times n: stmt       (alias repeat)
+	TOK_EACH    TokenType = "each"    // each x in list: stmt
+	TOK_DONE    TokenType = "done"    // done                (alias break)
+	TOK_SKIP    TokenType = "skip"    // skip                (alias continue)
+	TOK_RET     TokenType = "ret"     // ret expr            (alias return)
+	TOK_GIVE    TokenType = "give"    // give expr           (alias return)
+
+	// Value / assignment helpers
+	TOK_SWAP    TokenType = "swap"    // swap a, b
+	TOK_DEFAULT TokenType = "default" // default x = val  (set if zero)
+	TOK_EITHER  TokenType = "either"  // either a or b    (null coalesce)
+	TOK_CLAMP   TokenType = "clamp"   // clamp x, lo, hi  → stmt
+	TOK_BETWEEN TokenType = "between" // between x, lo, hi → bool expr
+
+	// Assertion / output / error
+	TOK_CHECK   TokenType = "check"   // check expr  (assert)
+	TOK_DIE     TokenType = "die"     // die msg     (error + exit)
+	TOK_MAYBE   TokenType = "maybe"   // maybe expr  (ignore if zero/null)
+	TOK_PRINTBANG TokenType = "printbang" // print! expr  (no-paren println)
+	TOK_BANG    TokenType = "!"
+
 	// Type keywords
 	TOK_TYPE_INT   TokenType = "int"
 	TOK_TYPE_FLOAT TokenType = "float"
@@ -54,31 +82,31 @@ const (
 	TOK_TYPE_ANY   TokenType = "any"
 
 	// Operators
-	TOK_PLUS      TokenType = "+"
-	TOK_MINUS     TokenType = "-"
-	TOK_STAR      TokenType = "*"
-	TOK_SLASH     TokenType = "/"
-	TOK_PERCENT   TokenType = "%"
-	TOK_POWER     TokenType = "**"
-	TOK_FLOORDIV  TokenType = "//"
-	TOK_EQ        TokenType = "=="
-	TOK_NEQ       TokenType = "!="
-	TOK_LT        TokenType = "<"
-	TOK_GT        TokenType = ">"
-	TOK_LTE       TokenType = "<="
-	TOK_GTE       TokenType = ">="
-	TOK_ASSIGN    TokenType = "="
-	TOK_PLUS_EQ   TokenType = "+="
-	TOK_MINUS_EQ  TokenType = "-="
-	TOK_STAR_EQ   TokenType = "*="
-	TOK_SLASH_EQ  TokenType = "/="
-	TOK_ARROW     TokenType = "->"
-	TOK_AMP       TokenType = "&"
-	TOK_PIPE      TokenType = "|"
-	TOK_CARET     TokenType = "^"
-	TOK_TILDE     TokenType = "~"
-	TOK_LSHIFT    TokenType = "<<"
-	TOK_RSHIFT    TokenType = ">>"
+	TOK_PLUS     TokenType = "+"
+	TOK_MINUS    TokenType = "-"
+	TOK_STAR     TokenType = "*"
+	TOK_SLASH    TokenType = "/"
+	TOK_PERCENT  TokenType = "%"
+	TOK_POWER    TokenType = "**"
+	TOK_FLOORDIV TokenType = "//"
+	TOK_EQ       TokenType = "=="
+	TOK_NEQ      TokenType = "!="
+	TOK_LT       TokenType = "<"
+	TOK_GT       TokenType = ">"
+	TOK_LTE      TokenType = "<="
+	TOK_GTE      TokenType = ">="
+	TOK_ASSIGN   TokenType = "="
+	TOK_PLUS_EQ  TokenType = "+="
+	TOK_MINUS_EQ TokenType = "-="
+	TOK_STAR_EQ  TokenType = "*="
+	TOK_SLASH_EQ TokenType = "/="
+	TOK_ARROW    TokenType = "->"
+	TOK_AMP      TokenType = "&"
+	TOK_PIPE     TokenType = "|"
+	TOK_CARET    TokenType = "^"
+	TOK_TILDE    TokenType = "~"
+	TOK_LSHIFT   TokenType = "<<"
+	TOK_RSHIFT   TokenType = ">>"
 
 	// Delimiters
 	TOK_LPAREN   TokenType = "("
@@ -111,6 +139,14 @@ var keywords = map[string]TokenType{
 	"bool": TOK_TYPE_BOOL, "void": TOK_TYPE_VOID, "list": TOK_TYPE_LIST,
 	"any": TOK_TYPE_ANY, "global": TOK_GLOBAL, "struct": TOK_STRUCT,
 	"new": TOK_NEW, "delete": TOK_DELETE,
+	// Smalltalk keywords
+	"iftrue": TOK_IFTRUE, "iffalse": TOK_IFFALSE, "unless": TOK_UNLESS,
+	"until": TOK_UNTIL, "loop": TOK_LOOP, "forever": TOK_FOREVER,
+	"repeat": TOK_REPEAT, "times": TOK_TIMES, "each": TOK_EACH,
+	"done": TOK_DONE, "skip": TOK_SKIP, "ret": TOK_RET, "give": TOK_GIVE,
+	"swap": TOK_SWAP, "default": TOK_DEFAULT, "either": TOK_EITHER,
+	"clamp": TOK_CLAMP, "between": TOK_BETWEEN,
+	"check": TOK_CHECK, "die": TOK_DIE, "maybe": TOK_MAYBE,
 }
 
 // ─── Token ────────────────────────────────────────────────────────────────────
@@ -120,7 +156,7 @@ type Token struct {
 	Value   string
 	Line    int
 	Col     int
-	LineStr string // full source line for error display
+	LineStr string
 }
 
 func (t Token) String() string {
@@ -199,7 +235,6 @@ func (l *Lexer) Tokenize() ([]Token, []PycError) {
 	for l.pos < len(l.source) {
 		l.lexLine()
 	}
-	// emit remaining DEDENTs
 	for len(l.indStack) > 1 {
 		l.tokens = append(l.tokens, l.makeToken(TOK_DEDENT, "", l.line, l.col))
 		l.indStack = l.indStack[:len(l.indStack)-1]
@@ -209,10 +244,8 @@ func (l *Lexer) Tokenize() ([]Token, []PycError) {
 }
 
 func (l *Lexer) lexLine() {
-	// Handle indentation at start of logical line
 	if l.col == 1 {
 		indent := 0
-		startPos := l.pos
 		for l.pos < len(l.source) && (l.source[l.pos] == ' ' || l.source[l.pos] == '\t') {
 			if l.source[l.pos] == '\t' {
 				indent += 4
@@ -222,12 +255,7 @@ func (l *Lexer) lexLine() {
 			l.pos++
 			l.col++
 		}
-		_ = startPos
-
-		// skip blank lines and comment-only lines
-		if l.pos < len(l.source) && (l.source[l.pos] == '\n' || l.source[l.pos] == '#') {
-			// skip
-		} else {
+		if l.pos < len(l.source) && l.source[l.pos] != '\n' && l.source[l.pos] != '#' {
 			curIndent := l.indStack[len(l.indStack)-1]
 			if indent > curIndent {
 				l.indStack = append(l.indStack, indent)
@@ -252,39 +280,30 @@ func (l *Lexer) lexLine() {
 
 	switch {
 	case ch == '#':
-		// comment — skip to end of line
 		for l.pos < len(l.source) && l.source[l.pos] != '\n' {
 			l.pos++
 			l.col++
 		}
-
 	case ch == '\n':
 		line, col := l.line, l.col
 		l.advance()
 		l.tokens = append(l.tokens, l.makeToken(TOK_NEWLINE, "\n", line, col))
-
 	case ch == '\r':
 		l.advance()
 		if l.peek() == '\n' {
 			l.advance()
 		}
 		l.tokens = append(l.tokens, l.makeToken(TOK_NEWLINE, "\n", l.line, l.col))
-
 	case ch == ' ' || ch == '\t':
-		// mid-line whitespace — skip
 		for l.pos < len(l.source) && (l.source[l.pos] == ' ' || l.source[l.pos] == '\t') {
 			l.advance()
 		}
-
 	case ch == '"' || ch == '\'':
 		l.lexString()
-
 	case unicode.IsDigit(rune(ch)):
 		l.lexNumber()
-
 	case unicode.IsLetter(rune(ch)) || ch == '_':
 		l.lexIdent()
-
 	default:
 		l.lexOp()
 	}
@@ -293,7 +312,6 @@ func (l *Lexer) lexLine() {
 func (l *Lexer) lexString() {
 	line, col := l.line, l.col
 	quote := l.advance()
-	// triple quote?
 	triple := false
 	if l.peek() == quote && l.peekAt(1) == quote {
 		triple = true
@@ -304,7 +322,9 @@ func (l *Lexer) lexString() {
 	for l.pos < len(l.source) {
 		if triple {
 			if l.peek() == quote && l.peekAt(1) == quote && l.peekAt(2) == quote {
-				l.advance(); l.advance(); l.advance()
+				l.advance()
+				l.advance()
+				l.advance()
 				break
 			}
 		} else {
@@ -333,6 +353,8 @@ func (l *Lexer) lexString() {
 				buf.WriteByte('\'')
 			case '0':
 				buf.WriteByte(0)
+			case 'r':
+				buf.WriteByte('\r')
 			default:
 				buf.WriteByte('\\')
 				buf.WriteByte(esc)
@@ -349,7 +371,6 @@ func (l *Lexer) lexNumber() {
 	var buf strings.Builder
 	isFloat := false
 
-	// hex
 	if l.peek() == '0' && (l.peekAt(1) == 'x' || l.peekAt(1) == 'X') {
 		buf.WriteByte(l.advance())
 		buf.WriteByte(l.advance())
@@ -398,6 +419,14 @@ func (l *Lexer) lexIdent() {
 		buf.WriteByte(l.advance())
 	}
 	word := buf.String()
+
+	// Special: "print!" is a single token (print + bang)
+	if word == "print" && l.pos < len(l.source) && l.peek() == '!' {
+		l.advance() // consume '!'
+		l.tokens = append(l.tokens, l.makeToken(TOK_PRINTBANG, "print!", line, col))
+		return
+	}
+
 	if tt, ok := keywords[word]; ok {
 		l.tokens = append(l.tokens, l.makeToken(tt, word, line, col))
 	} else {
@@ -409,20 +438,8 @@ func (l *Lexer) lexOp() {
 	line, col := l.line, l.col
 	ch := l.advance()
 
-	twoChar := string(ch)
-	if l.pos < len(l.source) {
-		twoChar += string(l.peek())
-	}
-
-	// Three-char
-	threeChar := twoChar
-	if l.pos+1 < len(l.source) {
-		threeChar += string(l.source[l.pos+1])
-	}
-	_ = threeChar
-
-	switch string(ch) {
-	case "*":
+	switch ch {
+	case '*':
 		if l.peek() == '*' {
 			l.advance()
 			if l.peek() == '=' {
@@ -437,7 +454,7 @@ func (l *Lexer) lexOp() {
 		} else {
 			l.tokens = append(l.tokens, l.makeToken(TOK_STAR, "*", line, col))
 		}
-	case "/":
+	case '/':
 		if l.peek() == '/' {
 			l.advance()
 			l.tokens = append(l.tokens, l.makeToken(TOK_FLOORDIV, "//", line, col))
@@ -447,14 +464,14 @@ func (l *Lexer) lexOp() {
 		} else {
 			l.tokens = append(l.tokens, l.makeToken(TOK_SLASH, "/", line, col))
 		}
-	case "+":
+	case '+':
 		if l.peek() == '=' {
 			l.advance()
 			l.tokens = append(l.tokens, l.makeToken(TOK_PLUS_EQ, "+=", line, col))
 		} else {
 			l.tokens = append(l.tokens, l.makeToken(TOK_PLUS, "+", line, col))
 		}
-	case "-":
+	case '-':
 		if l.peek() == '>' {
 			l.advance()
 			l.tokens = append(l.tokens, l.makeToken(TOK_ARROW, "->", line, col))
@@ -464,21 +481,21 @@ func (l *Lexer) lexOp() {
 		} else {
 			l.tokens = append(l.tokens, l.makeToken(TOK_MINUS, "-", line, col))
 		}
-	case "=":
+	case '=':
 		if l.peek() == '=' {
 			l.advance()
 			l.tokens = append(l.tokens, l.makeToken(TOK_EQ, "==", line, col))
 		} else {
 			l.tokens = append(l.tokens, l.makeToken(TOK_ASSIGN, "=", line, col))
 		}
-	case "!":
+	case '!':
 		if l.peek() == '=' {
 			l.advance()
 			l.tokens = append(l.tokens, l.makeToken(TOK_NEQ, "!=", line, col))
 		} else {
 			l.addError(ErrUnexpectedChar, line, col, "!")
 		}
-	case "<":
+	case '<':
 		if l.peek() == '=' {
 			l.advance()
 			l.tokens = append(l.tokens, l.makeToken(TOK_LTE, "<=", line, col))
@@ -488,7 +505,7 @@ func (l *Lexer) lexOp() {
 		} else {
 			l.tokens = append(l.tokens, l.makeToken(TOK_LT, "<", line, col))
 		}
-	case ">":
+	case '>':
 		if l.peek() == '=' {
 			l.advance()
 			l.tokens = append(l.tokens, l.makeToken(TOK_GTE, ">=", line, col))
@@ -498,37 +515,37 @@ func (l *Lexer) lexOp() {
 		} else {
 			l.tokens = append(l.tokens, l.makeToken(TOK_GT, ">", line, col))
 		}
-	case "(":
+	case '(':
 		l.tokens = append(l.tokens, l.makeToken(TOK_LPAREN, "(", line, col))
-	case ")":
+	case ')':
 		l.tokens = append(l.tokens, l.makeToken(TOK_RPAREN, ")", line, col))
-	case "[":
+	case '[':
 		l.tokens = append(l.tokens, l.makeToken(TOK_LBRACKET, "[", line, col))
-	case "]":
+	case ']':
 		l.tokens = append(l.tokens, l.makeToken(TOK_RBRACKET, "]", line, col))
-	case "{":
+	case '{':
 		l.tokens = append(l.tokens, l.makeToken(TOK_LBRACE, "{", line, col))
-	case "}":
+	case '}':
 		l.tokens = append(l.tokens, l.makeToken(TOK_RBRACE, "}", line, col))
-	case ":":
+	case ':':
 		l.tokens = append(l.tokens, l.makeToken(TOK_COLON, ":", line, col))
-	case ",":
+	case ',':
 		l.tokens = append(l.tokens, l.makeToken(TOK_COMMA, ",", line, col))
-	case ".":
+	case '.':
 		l.tokens = append(l.tokens, l.makeToken(TOK_DOT, ".", line, col))
-	case ";":
+	case ';':
 		l.tokens = append(l.tokens, l.makeToken(TOK_SEMICOL, ";", line, col))
-	case "%":
+	case '%':
 		l.tokens = append(l.tokens, l.makeToken(TOK_PERCENT, "%", line, col))
-	case "&":
+	case '&':
 		l.tokens = append(l.tokens, l.makeToken(TOK_AMP, "&", line, col))
-	case "|":
+	case '|':
 		l.tokens = append(l.tokens, l.makeToken(TOK_PIPE, "|", line, col))
-	case "^":
+	case '^':
 		l.tokens = append(l.tokens, l.makeToken(TOK_CARET, "^", line, col))
-	case "~":
+	case '~':
 		l.tokens = append(l.tokens, l.makeToken(TOK_TILDE, "~", line, col))
-	case "@":
+	case '@':
 		l.tokens = append(l.tokens, l.makeToken(TOK_AT, "@", line, col))
 	default:
 		l.addError(ErrUnexpectedChar, line, col, string(ch))

@@ -283,6 +283,10 @@ func (tc *TypeChecker) checkStmt(node Node) {
 		tc.checkExpr(n.Expr)
 	case *PassStmt, *ImportStmt:
 		// ok
+	// Smalltalk nodes
+	case *IfTrueStmt, *RepeatStmt, *EachStmt, *LoopStmt, *UntilStmt,
+		*SwapStmt, *DefaultStmt, *CheckStmt, *DieStmt, *MaybeStmt, *PrintBangStmt:
+		tc.checkSmallTalk(node)
 	}
 }
 
@@ -643,6 +647,17 @@ func (tc *TypeChecker) checkExpr(node Node) *Type {
 		return TypAny
 	case *RangeExpr:
 		return ListType(TypInt)
+	case *ClampExpr:
+		tc.checkSmallTalk(n)
+		return tc.checkExpr(n.Val)
+	case *BetweenExpr:
+		tc.checkSmallTalk(n)
+		return TypBool
+	case *EitherExpr:
+		tc.checkSmallTalk(n)
+		t1 := tc.checkExpr(n.A)
+		if typesEqual(t1, TypAny) { return tc.checkExpr(n.B) }
+		return t1
 	}
 	return TypAny
 }
@@ -952,4 +967,64 @@ func (tc *TypeChecker) checkNew(n *NewExpr) *Type {
 	}
 	for _, arg := range n.Args { tc.checkExpr(arg) }
 	return StructType(n.TypeName)
+}
+
+// ─── Smalltalk node checking ──────────────────────────────────────────────────
+
+func (tc *TypeChecker) checkSmallTalk(node Node) {
+	switch n := node.(type) {
+	case *IfTrueStmt:
+		tc.checkExpr(n.Cond)
+		tc.checkStmt(n.Body)
+	case *RepeatStmt:
+		tc.checkExpr(n.Count)
+		tc.inLoop++
+		tc.checkStmt(n.Body)
+		tc.inLoop--
+	case *EachStmt:
+		iterType := tc.checkExpr(n.Iter)
+		elemType := TypAny
+		if iterType != nil && iterType.Kind == TyList && iterType.ElemType != nil {
+			elemType = iterType.ElemType
+		}
+		tc.pushScope()
+		tc.scope.define(&Symbol{Name: n.Var, Type: elemType, Used: true, Line: n.Line, Col: n.Col})
+		tc.inLoop++
+		tc.checkStmt(n.Body)
+		tc.inLoop--
+		tc.popScope()
+	case *LoopStmt:
+		tc.inLoop++
+		tc.pushScope()
+		for _, s := range n.Body { tc.checkStmt(s) }
+		tc.popScope()
+		tc.inLoop--
+	case *UntilStmt:
+		tc.checkExpr(n.Cond)
+		tc.inLoop++
+		tc.pushScope()
+		for _, s := range n.Body { tc.checkStmt(s) }
+		tc.popScope()
+		tc.inLoop--
+	case *SwapStmt:
+		tc.checkExpr(n.A)
+		tc.checkExpr(n.B)
+	case *DefaultStmt:
+		tc.checkExpr(n.Target)
+		tc.checkExpr(n.Value)
+	case *CheckStmt:
+		tc.checkExpr(n.Expr)
+	case *DieStmt:
+		tc.checkExpr(n.Msg)
+	case *MaybeStmt:
+		tc.checkExpr(n.Expr)
+	case *PrintBangStmt:
+		for _, a := range n.Args { tc.checkExpr(a) }
+	case *ClampExpr:
+		tc.checkExpr(n.Val); tc.checkExpr(n.Lo); tc.checkExpr(n.Hi)
+	case *BetweenExpr:
+		tc.checkExpr(n.Val); tc.checkExpr(n.Lo); tc.checkExpr(n.Hi)
+	case *EitherExpr:
+		tc.checkExpr(n.A); tc.checkExpr(n.B)
+	}
 }

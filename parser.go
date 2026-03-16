@@ -360,6 +360,47 @@ func (p *Parser) parseStmt() Node {
 		return p.parseImport()
 	case TOK_EOF, TOK_DEDENT:
 		return nil
+	// ── Smalltalk keywords ────────────────────────────────────────────────────
+	case TOK_IFTRUE:
+		return p.parseIfTrue(false)
+	case TOK_IFFALSE, TOK_UNLESS:
+		return p.parseIfTrue(true)
+	case TOK_REPEAT, TOK_TIMES:
+		return p.parseRepeat()
+	case TOK_EACH:
+		return p.parseEach()
+	case TOK_LOOP, TOK_FOREVER:
+		return p.parseLoop()
+	case TOK_UNTIL:
+		return p.parseUntil()
+	case TOK_SWAP:
+		return p.parseSwap()
+	case TOK_DEFAULT:
+		return p.parseDefault()
+	case TOK_CHECK:
+		return p.parseCheck()
+	case TOK_DIE:
+		return p.parseDie()
+	case TOK_MAYBE:
+		return p.parseMaybe()
+	case TOK_PRINTBANG:
+		return p.parsePrintBang()
+	case TOK_DONE:
+		p.advance()
+		return &BreakStmt{BaseNode: BaseNode{Line: t.Line, Col: t.Col}}
+	case TOK_SKIP:
+		p.advance()
+		return &ContinueStmt{BaseNode: BaseNode{Line: t.Line, Col: t.Col}}
+	case TOK_RET, TOK_GIVE:
+		p.advance()
+		rs := &ReturnStmt{BaseNode: BaseNode{Line: t.Line, Col: t.Col}}
+		if p.pos < len(p.tokens) {
+			rawNext := p.tokens[p.pos].Type
+			if rawNext != TOK_NEWLINE && rawNext != TOK_SEMICOL && rawNext != TOK_EOF && rawNext != TOK_DEDENT {
+				rs.Value = p.parseExpr()
+			}
+		}
+		return rs
 	default:
 		return p.parseExprOrAssign()
 	}
@@ -980,6 +1021,12 @@ func (p *Parser) parsePrimary() Node {
 
 	case TOK_NEW:
 		return p.parseNew()
+	case TOK_CLAMP:
+		return p.parseClamp()
+	case TOK_BETWEEN:
+		return p.parseBetween()
+	case TOK_EITHER:
+		return p.parseEither()
 
 	default:
 		p.addError(ErrExpectedExpr, t.Line, t.Col, t.LineStr, t.Value)
@@ -1087,3 +1134,174 @@ func (p *Parser) parseFString(strTok Token) *FStringExpr {
 
 // Expose parse errors
 func (p *Parser) Errors() []PycError { return p.errors }
+
+// ─── Smalltalk / One-liner Statement Parsers ──────────────────────────────────
+
+func (p *Parser) parseInlineBody() Node {
+	// For one-liner keywords: parse a single statement on the same line.
+	// After the colon we expect a statement (not an indented block).
+	p.skipNewlines()
+	return p.parseStmt()
+}
+
+func (p *Parser) parseIfTrue(negated bool) *IfTrueStmt {
+	tok := p.advance() // consume iftrue/iffalse/unless
+	node := &IfTrueStmt{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}, Negated: negated}
+	node.Cond = p.parseExpr()
+	colonTok := p.peek()
+	if !p.match(TOK_COLON) {
+		p.addError(ErrExpectedColon, colonTok.Line, colonTok.Col, colonTok.LineStr, "iftrue/iffalse")
+	}
+	node.Body = p.parseInlineBody()
+	return node
+}
+
+func (p *Parser) parseRepeat() *RepeatStmt {
+	tok := p.advance() // consume repeat/times
+	node := &RepeatStmt{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
+	node.Count = p.parseExpr()
+	colonTok := p.peek()
+	if !p.match(TOK_COLON) {
+		p.addError(ErrExpectedColon, colonTok.Line, colonTok.Col, colonTok.LineStr, "repeat")
+	}
+	node.Body = p.parseInlineBody()
+	return node
+}
+
+func (p *Parser) parseEach() *EachStmt {
+	tok := p.advance() // consume 'each'
+	node := &EachStmt{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
+	varTok := p.peek()
+	if varTok.Type != TOK_IDENT {
+		p.addError(ErrExpectedIdent, varTok.Line, varTok.Col, varTok.LineStr, varTok.Value)
+	} else {
+		p.advance()
+	}
+	node.Var = varTok.Value
+	inTok := p.peek()
+	if !p.match(TOK_IN) {
+		p.addError(ErrExpectedIn, inTok.Line, inTok.Col, inTok.LineStr, inTok.Value)
+	}
+	node.Iter = p.parseExpr()
+	colonTok := p.peek()
+	if !p.match(TOK_COLON) {
+		p.addError(ErrExpectedColon, colonTok.Line, colonTok.Col, colonTok.LineStr, "each")
+	}
+	node.Body = p.parseInlineBody()
+	return node
+}
+
+func (p *Parser) parseLoop() *LoopStmt {
+	tok := p.advance() // consume loop/forever
+	node := &LoopStmt{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
+	colonTok := p.peek()
+	if !p.match(TOK_COLON) {
+		p.addError(ErrExpectedColon, colonTok.Line, colonTok.Col, colonTok.LineStr, "loop")
+	}
+	node.Body = p.parseBlock("loop")
+	return node
+}
+
+func (p *Parser) parseUntil() *UntilStmt {
+	tok := p.advance() // consume 'until'
+	node := &UntilStmt{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
+	node.Cond = p.parseExpr()
+	colonTok := p.peek()
+	if !p.match(TOK_COLON) {
+		p.addError(ErrExpectedColon, colonTok.Line, colonTok.Col, colonTok.LineStr, "until")
+	}
+	node.Body = p.parseBlock("until")
+	return node
+}
+
+func (p *Parser) parseSwap() *SwapStmt {
+	tok := p.advance() // consume 'swap'
+	node := &SwapStmt{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
+	node.A = p.parseExpr()
+	if !p.match(TOK_COMMA) {
+		p.addError(ErrExpectedComma, tok.Line, tok.Col, tok.LineStr, p.peek().Value)
+	}
+	node.B = p.parseExpr()
+	return node
+}
+
+func (p *Parser) parseDefault() *DefaultStmt {
+	tok := p.advance() // consume 'default'
+	node := &DefaultStmt{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
+	node.Target = p.parseExpr()
+	if !p.match(TOK_ASSIGN) {
+		p.addError(ErrExpectedToken, tok.Line, tok.Col, tok.LineStr, "=", p.peek().Value)
+	}
+	node.Value = p.parseExpr()
+	return node
+}
+
+func (p *Parser) parseCheck() *CheckStmt {
+	tok := p.advance()
+	node := &CheckStmt{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
+	node.Expr = p.parseExpr()
+	return node
+}
+
+func (p *Parser) parseDie() *DieStmt {
+	tok := p.advance()
+	node := &DieStmt{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
+	node.Msg = p.parseExpr()
+	return node
+}
+
+func (p *Parser) parseMaybe() *MaybeStmt {
+	tok := p.advance()
+	node := &MaybeStmt{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
+	node.Expr = p.parseExpr()
+	return node
+}
+
+func (p *Parser) parsePrintBang() *PrintBangStmt {
+	tok := p.advance() // consume 'print!'
+	node := &PrintBangStmt{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
+	// collect comma-separated args until end of line
+	for {
+		if p.pos >= len(p.tokens) { break }
+		rawTT := p.tokens[p.pos].Type
+		if rawTT == TOK_NEWLINE || rawTT == TOK_DEDENT || rawTT == TOK_EOF { break }
+		arg := p.parseExpr()
+		node.Args = append(node.Args, arg)
+		if !p.match(TOK_COMMA) { break }
+	}
+	return node
+}
+
+func (p *Parser) parseClamp() *ClampExpr {
+	tok := p.advance() // consume 'clamp'
+	node := &ClampExpr{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
+	node.Val = p.parseExpr()
+	p.expect(TOK_COMMA)
+	node.Lo = p.parseExpr()
+	p.expect(TOK_COMMA)
+	node.Hi = p.parseExpr()
+	return node
+}
+
+func (p *Parser) parseBetween() *BetweenExpr {
+	tok := p.advance() // consume 'between'
+	node := &BetweenExpr{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
+	node.Val = p.parseExpr()
+	p.expect(TOK_COMMA)
+	node.Lo = p.parseExpr()
+	p.expect(TOK_COMMA)
+	node.Hi = p.parseExpr()
+	return node
+}
+
+func (p *Parser) parseEither() *EitherExpr {
+	tok := p.advance() // consume 'either'
+	node := &EitherExpr{BaseNode: BaseNode{Line: tok.Line, Col: tok.Col}}
+	node.A = p.parseExpr()
+	// expect 'or'
+	if !p.match(TOK_OR) {
+		p.addError(ErrExpectedToken, tok.Line, tok.Col, tok.LineStr, "or", p.peek().Value)
+	}
+	node.B = p.parseExpr()
+	return node
+}

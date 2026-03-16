@@ -320,3 +320,104 @@ type FStringPart struct {
 	Text   string
 	Expr   Node
 }
+
+// ─── Smalltalk / One-liner AST Nodes ─────────────────────────────────────────
+
+// iftrue cond: stmt   /  iffalse cond: stmt  /  unless cond: stmt
+type IfTrueStmt struct {
+	BaseNode
+	Cond    Node
+	Body    Node // single statement
+	Negated bool // true = iffalse/unless
+}
+
+// repeat n: stmt  /  times n: stmt
+type RepeatStmt struct {
+	BaseNode
+	Count Node
+	Body  Node
+}
+
+// each x in expr: stmt
+type EachStmt struct {
+	BaseNode
+	Var  string
+	Iter Node
+	Body Node
+}
+
+// loop: body  /  forever: body
+type LoopStmt struct {
+	BaseNode
+	Body []Node
+}
+
+// until cond: body
+type UntilStmt struct {
+	BaseNode
+	Cond Node
+	Body []Node
+}
+
+// swap a, b
+type SwapStmt struct {
+	BaseNode
+	A Node
+	B Node
+}
+
+// default x = val
+type DefaultStmt struct {
+	BaseNode
+	Target Node
+	Value  Node
+}
+
+// check expr
+type CheckStmt struct {
+	BaseNode
+	Expr Node
+}
+
+// die expr
+type DieStmt struct {
+	BaseNode
+	Msg Node
+}
+
+// maybe expr
+type MaybeStmt struct {
+	BaseNode
+	Expr Node
+}
+
+// print! expr1, expr2, ...
+type PrintBangStmt struct {
+	BaseNode
+	Args []Node
+}
+
+// clamp x, lo, hi  → expression
+type ClampExpr struct {
+	BaseNode
+	Val  Node
+	Lo   Node
+	Hi   Node
+}
+
+// between x, lo, hi → bool expression
+type BetweenExpr struct {
+	BaseNode
+	Val  Node
+	Lo   Node
+	Hi   Node
+}
+
+// either a or b → expression
+type EitherExpr struct {
+	BaseNode
+	A Node
+	B Node
+}
+
+// done / skip / ret / give are handled as aliases in parseStmt → no new nodes needed

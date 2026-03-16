@@ -1,32 +1,8 @@
-# ─── demo.pyc — PyC Language Feature Demo ───────────────────────────────────
-# Run with:  pyc run demo.pyc
-
-# ── Structs ──────────────────────────────────────────────────────────────────
-struct Point:
-    x: float
-    y: float
-
-struct Person:
-    name: str
-    age:  int
-
-# ── Functions with typed params & return types ────────────────────────────────
-def greet(name: str) -> str:
-    return f"Hello, {name}!"
+# demo.pyc — PyC full feature demo including all smalltalk keywords
+# Run:  ./pyc run demo.pyc
 
 def add(a: int, b: int) -> int:
     return a + b
-
-def hypotenuse(a: float, b: float) -> float:
-    return sqrt(a * a + b * b)
-
-def factorial(n: int) -> int:
-    if n <= 1:
-        return 1
-    return n * factorial(n - 1)
-
-def is_even(n: int) -> bool:
-    return n % 2 == 0
 
 def fizzbuzz(n: int) -> str:
     if n % 15 == 0:
@@ -38,135 +14,144 @@ def fizzbuzz(n: int) -> str:
     else:
         return str(n)
 
-# ── Main program ──────────────────────────────────────────────────────────────
+def is_even(n: int) -> bool:
+    return n % 2 == 0
+
+def factorial(n: int) -> int:
+    if n <= 1:
+        return 1
+    return n * factorial(n - 1)
+
+struct Point:
+    x: float
+    y: float
+
 def main():
-    # Basic output
-    print("═══════════════════════════════")
-    print("     PyC Language Demo")
-    print("═══════════════════════════════")
+    print("══════════════════════════════════════")
+    print("   PyC — Smalltalk Keywords Demo")
+    print("══════════════════════════════════════")
 
-    # Variables — auto-inferred types
-    x = 42
-    pi = 3.14159
-    name = "PyC"
-    flag = True
+    # ── iftrue / iffalse / unless ─────────────────────────────────────────────
+    print("\n[1] iftrue / iffalse / unless")
+    x = 10
+    iftrue x > 5: print("x is greater than 5")
+    iffalse x > 100: print("x is not greater than 100")
+    unless x == 0: print("x is non-zero")
 
-    print(f"x={x}  pi={pi}  name={name}  flag={flag}")
+    # ── repeat / times ────────────────────────────────────────────────────────
+    print("\n[2] repeat / times")
+    repeat 3: print("hello from repeat!")
+    times 2: print("hello from times!")
 
-    # Explicit typed declarations
-    #count: int = 0
-    msg: str = "started"
-    print(f"count={count}  msg={msg}")
-
-    # Arithmetic
-    result = add(10, 32)
-    print(f"add(10, 32) = {result}")
-    print(f"5 ** 3 = {5 ** 3}")
-    print(f"17 // 5 = {17 // 5}")
-    print(f"hypotenuse(3, 4) = {hypotenuse(3.0, 4.0)}")
-
-    # String operations
-    s = "  Hello, World!  "
-    print(s.strip())
-    print(s.strip().upper())
-    print(s.strip().lower())
-    print(s.strip().replace("World", "PyC"))
-    print(s.startswith("  "))
-    print(s.contains("World"))
-    print(s.endswith("  "))
-
-    # F-strings
-    city = "Karachi"
-    temp = 38
-    print(f"Weather in {city}: {temp} degrees")
-
-    # Lists
+    # ── each ──────────────────────────────────────────────────────────────────
+    print("\n[3] each")
     nums: list[int] = [10, 20, 30, 40, 50]
-    print(f"List: len={len(nums)}")
-    nums.append(60)
-    print(f"After append: len={len(nums)}")
-    print(f"nums[0]={nums[0]}  nums[-1 + len(nums)]=?")
+    each n in nums: print(n)
 
-    # For loop with range
-    print("Squares 1-5:")
-    for i in range(1, 6):
-        sq = i * i
-        print(f"  {i}^2 = {sq}")
+    each i in range(5): print(f"  i={i}")
 
-    # For loop over list
-    total: int = 0
-    for n in nums:
-        total += n
-    print(f"Sum of list = {total}")
+    # ── loop / forever ────────────────────────────────────────────────────────
+    print("\n[4] loop (infinite with break)")
+    counter = 0
+    loop:
+        counter += 1
+        iftrue counter >= 3: done
 
-    # While loop
-    n = 1
-    print("Powers of 2:")
-    while n <= 32:
-        print(f"  {n}")
-        n = n * 2
+    print(f"loop ran {counter} times")
 
-    # If / elif / else
-    score = 75
-    if score >= 90:
-        grade = "A"
-    elif score >= 80:
-        grade = "B"
-    elif score >= 70:
-        grade = "C"
-    else:
-        grade = "F"
-    print(f"Score {score} => grade {grade}")
+    forever:
+        counter -= 1
+        iftrue counter <= 0: done
 
-    # Ternary expression
-    parity = "even" if is_even(42) else "odd"
-    print(f"42 is {parity}")
+    print(f"forever ran down to {counter}")
 
-    # Struct usage
-    p = new Point(3.0, 4.0)
-    dist = hypotenuse(p.x, p.y)
-    print(f"Point({p.x}, {p.y}) distance = {dist}")
+    # ── until ─────────────────────────────────────────────────────────────────
+    print("\n[5] until")
+    n = 0
+    until n >= 5:
+        n += 1
+    print(f"until stopped at n={n}")
 
-    person = new Person("Alice", 30)
-    print(f"Person: {person.name}, age {person.age}")
+    # ── done / skip ───────────────────────────────────────────────────────────
+    print("\n[6] done and skip (aliases for break/continue)")
+    for i in range(10):
+        iftrue i == 3: skip
+        iftrue i == 7: done
+        print(f"  i={i}")
 
-    # Built-in conversions
-    num_str = "42"
-    num_int = int(num_str)
-    num_float = float("3.14")
-    back_to_str = str(num_int)
-    print(f"int('42')={num_int}  float('3.14')={num_float}  str(42)={back_to_str}")
+    # ── ret / give ────────────────────────────────────────────────────────────
+    print("\n[7] ret and give (aliases for return)")
+    result = add(3, 4)
+    print(f"add(3,4) = {result}")
 
-    # Math builtins
-    print(f"abs(-7) = {abs(-7)}")
-    print(f"max(3,9) = {max(3, 9)}")
-    print(f"min(3,9) = {min(3, 9)}")
-    print(f"sqrt(144.0) = {sqrt(144.0)}")
-    print(f"floor(3.7) = {floor(3.7)}")
-    print(f"ceil(3.2) = {ceil(3.2)}")
+    # ── swap ──────────────────────────────────────────────────────────────────
+    print("\n[8] swap")
+    a = 100
+    b = 200
+    print(f"before: a={a} b={b}")
+    swap a, b
+    print(f"after:  a={a} b={b}")
 
-    # Factorial
-    print(f"factorial(10) = {factorial(10)}")
+    # ── default ───────────────────────────────────────────────────────────────
+    print("\n[9] default (set if zero/null)")
+    score = 0
+    default score = 42
+    print(f"score after default = {score}")
 
-    # FizzBuzz
-    print("FizzBuzz 1-20:")
-    for i in range(1, 21):
+    score2 = 99
+    default score2 = 0
+    print(f"score2 (already set) = {score2}")
+
+    # ── check ─────────────────────────────────────────────────────────────────
+    print("\n[10] check (assert)")
+    check 2 + 2 == 4
+    check result == 7
+    print("all checks passed!")
+
+    # ── die ───────────────────────────────────────────────────────────────────
+    print("\n[11] die (would exit — skipping live demo)")
+    # die "something went wrong"   # uncomment to test
+
+    # ── maybe ─────────────────────────────────────────────────────────────────
+    print("\n[12] maybe (safe call, ignore null)")
+    name = "PyC"
+    maybe name.upper()
+    print("maybe executed safely")
+
+    # ── print! ────────────────────────────────────────────────────────────────
+    print("\n[13] print! (no-paren println)")
+    print! "Hello from print!"
+    print! "a=", a, "b=", b
+
+    # ── clamp ─────────────────────────────────────────────────────────────────
+    print("\n[14] clamp")
+    v1 = clamp(150, 0, 100)
+    v2 = clamp(-5, 0, 100)
+    v3 = clamp(50, 0, 100)
+    print(f"clamp(150,0,100) = {v1}")
+    print(f"clamp(-5, 0,100) = {v2}")
+    print(f"clamp(50, 0,100) = {v3}")
+
+    # ── between ───────────────────────────────────────────────────────────────
+    print("\n[15] between")
+    print(f"between(50,0,100)  = {between(50, 0, 100)}")
+    print(f"between(150,0,100) = {between(150, 0, 100)}")
+
+    # ── either ────────────────────────────────────────────────────────────────
+    print("\n[16] either ... or ... (null coalescing)")
+    fallback = either 0 or 99
+    print(f"either 0 or 99 = {fallback}")
+    fallback2 = either 42 or 99
+    print(f"either 42 or 99 = {fallback2}")
+
+    # ── fizzbuzz with ret ─────────────────────────────────────────────────────
+    print("\n[17] FizzBuzz 1-15:")
+    for i in range(1, 16):
         print(f"  {fizzbuzz(i)}")
 
-    # Greeting function
-    msg2 = greet("World")
-    print(msg2)
+    # ── factorial ─────────────────────────────────────────────────────────────
+    print(f"\nfactorial(10) = {factorial(10)}")
 
-    # String split / join
-    sentence = "the quick brown fox"
-    words = sentence.split(" ")
-    joined = " | ".join(words)
-    print(f"joined: {joined}")
-
-    # ord / chr
-    print(f"ord('A') = {ord('A')}")
-    print(f"chr(65) = {chr(65)}")
-
-    print("═══════════════════════════════")
-    print("         All done!")
-    print("═══════════════════════════════")
+    print("\n══════════════════════════════════════")
+    print("           All done!")
+    print("══════════════════════════════════════")
